@@ -306,18 +306,7 @@ export default {
       update.my_chat_member?.chat?.id ??
       update.channel_post?.chat?.id ??
       null;
-
-    if (chatId) {
-      await tg("sendMessage", token, {
-        chat_id: chatId,
-        text: "Пинг: апдейт получен ✅",
-      });
-    } else {
-      console.log("No chatId in update");
-    }
-  } catch (e) {
-    console.log("Immediate ping send error", e?.toString?.() || e);
-  }
+ }
 
   const state = await loadState(env);
   // дальше оставляем вашу логику команд/фото/колбеков как было
