@@ -216,6 +216,11 @@ async function cmdSchedule(token, msg, state, args) {
 }
 
 /* ---------- Pickup (end-of-day times) ---------- */
+function formatPickupWeek(mapping) {
+  const order = ["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"];
+  const rows = order.map(d => `${d} — ${mapping?.[d] || "—"}`);
+  return rows.join("\n");
+}
 function parsePickupMapping(str) {
   // ПН=13:30,ВТ=12:40,...  (разделители запятая/точка с запятой)
   const out = {};
