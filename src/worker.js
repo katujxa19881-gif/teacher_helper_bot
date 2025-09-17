@@ -1,13 +1,13 @@
 // Cloudflare Worker: Telegram-бот для класса
-// Bindings/vars:
-// - KV_BOT (KV Namespace)
-// - BOT_TOKEN (Secret)
-// - PUBLIC_URL (Text, без завершающего /)
+// Bindings / Vars (Cloudflare → Settings):
+// - KV Namespace binding: KV_BOT
+// - Secret: BOT_TOKEN
+// - Text:   PUBLIC_URL  (без завершающего "/"; напр. https://teacher-helper.xxx.workers.dev)
 
 const OK = (body = "ok") => new Response(body, { status: 200 });
 const NO = (code = 404, body = "not found") => new Response(body, { status: code });
 
-/* ---------- Telegram API ---------- */
+/* ======================= Telegram API ======================= */
 async function tg(method, token, payload) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
@@ -17,7 +17,7 @@ async function tg(method, token, payload) {
   return res.json();
 }
 
-// Диагностическая обёртка: логируем каждый вызов к Telegram
+// Диагностика: логируем каждый вызов к Telegram (видно ok/401/403)
 async function sendSafe(method, token, payload) {
   try {
     const res = await tg(method, token, payload);
@@ -29,13 +29,20 @@ async function sendSafe(method, token, payload) {
   }
 }
 
-/* ---------- KV state ---------- */
+/* ======================= KV state ======================= */
 async function loadState(env) {
   const raw = await env.KV_BOT.get("state");
   if (!raw) {
     return {
       teacher_id: null,
-      classes: {}, // "5А": { general_chat_id, parents_chat_id, schedule_file_id, schedule_caption, last_update_iso, bus_file_id, bus_caption, pickup_times }
+      classes: {
+        // "5А": {
+        //   general_chat_id, parents_chat_id,
+        //   schedule_file_id, schedule_caption, last_update_iso,
+        //   bus_file_id, bus_caption,
+        //   pickup_times: {"ПН":"13:30","ВТ":"12:40",...}
+        // }
+      },
       faq: [],     // { q, a, kw:[], cat:"" }
       forward_unknown_to_teacher: true,
     };
@@ -55,14 +62,18 @@ function ensureClass(state, cls) {
       last_update_iso: null,
       bus_file_id: null,
       bus_caption: null,
-      pickup_times: null, // {"ПН":"13:30","ВТ":"12:40",...}
+      pickup_times: null,
     };
   }
 }
 
-/* ---------- Utils ---------- */
+/* ======================= Utils ======================= */
 function normalize(s = "") {
-  return s.toLowerCase().replace(/[ё]/g, "е").replace(/[^a-zа-я0-9\s#:+-]/g, " ").replace(/\s+/g, " ").trim();
+  return s.toLowerCase()
+    .replace(/[ё]/g, "е")
+    .replace(/[^a-zа-я0-9\s#:+-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 function parseClassFrom(text = "") {
   const m = text.match(/#?\s*([0-9]{1,2}\s*[А-ЯA-Z])/i);
@@ -96,20 +107,26 @@ function listCategories(state) {
   return [...s].sort();
 }
 
-/* ---------- Time helpers (Europe/Amsterdam) ---------- */
+/* ======================= Time helpers (Europe/Amsterdam) ======================= */
 const TZ = "Europe/Amsterdam";
-const RU_DAYS = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"];
-const RU_DAYS_FULL = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
+const DAY_SHORT = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"];
+const DAY_FULL  = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
+
+function ruShortFor(date) {
+  // берём первые две буквы "пн", "вт" и т.п., приводим к верхнему регистру
+  const s = new Intl.DateTimeFormat("ru-RU", { weekday: "short", timeZone: TZ }).format(date);
+  const v = s.slice(0,2).toUpperCase();
+  const map = { "ПН":"ПН","ВТ":"ВТ","СР":"СР","ЧТ":"ЧТ","ПТ":"ПТ","СБ":"СБ","ВС":"ВС" };
+  return map[v] || v;
+}
+function todayRuShort() { return ruShortFor(new Date()); }
+function tomorrowRuShort() { return ruShortFor(new Date(Date.now() + 86400000)); }
 
 function dayShortFromInput(s = "") {
   const n = normalize(s);
-  if (/^завтра$/.test(n)) {
-    const d = new Date();
-    const next = new Date(d.getTime() + 86400000);
-    const idx = Number(new Intl.DateTimeFormat("ru-RU",{weekday:"short",timeZone:TZ}).formatToParts(next).find(p=>p.type==="weekday")?.value?.match(/[А-Яа-я]{2}/i)?.[0]?.toUpperCase?.()?.slice(0,2));
-    // fallback через Date.getDay():
-  }
-  // поддержка коротких и длинных русских/английских
+  if (!n) return null;
+  if (n === "сегодня") return todayRuShort();
+  if (n === "завтра") return tomorrowRuShort();
   const map = {
     "пн":"ПН","пон":"ПН","понедельник":"ПН","mon":"ПН","monday":"ПН",
     "вт":"ВТ","вторник":"ВТ","tue":"ВТ","tuesday":"ВТ",
@@ -121,19 +138,12 @@ function dayShortFromInput(s = "") {
   };
   return map[n] || null;
 }
-function todayRuShort() {
-  const d = new Date();
-  const idx = (d.toLocaleString("ru-RU",{weekday:"short", timeZone:TZ}).slice(0,2).toUpperCase());
-  // приведение Вс/Ср и т.д. к двум буквам
-  const map = {"ВС":"ВС","ПН":"ПН","ВТ":"ВТ","СР":"СР","ЧТ":"ЧТ","ПТ":"ПТ","СБ":"СБ"};
-  return map[idx] || ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"][d.getUTCDay()];
-}
 function dayNameFull(short) {
-  const i = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"].indexOf(short);
-  return i>=0 ? RU_DAYS_FULL[i] : short;
+  const i = DAY_SHORT.indexOf(short);
+  return i >= 0 ? DAY_FULL[i] : short;
 }
 
-/* ---------- Keyboards ---------- */
+/* ======================= Keyboards ======================= */
 function kbCategories(cats) {
   return { inline_keyboard: cats.map(c => [{ text: `📚 ${c}`, callback_data: `faq_cat::${c}` }]) };
 }
@@ -150,31 +160,31 @@ function kbFaqItems(items, page = 0, perPage = 8, cat = "") {
   return { inline_keyboard: rows };
 }
 
-/* ---------- Commands (base) ---------- */
+/* ======================= Команды: базовые ======================= */
 async function cmdStart(token, chatId) {
   const text = [
-  "Команды:",
-  "/schedule — показать расписание",
-  "/buses — расписание автобусов",
-  "/pickup [день|класс] — во сколько забирать (по дням недели)",
-  "/pickup_week [класс] — время забора на всю неделю",
-  "/ask ВОПРОС — спросить бота (FAQ + пересылка учителю при необходимости)",
-  "/faq — список частых вопросов (кнопки/категории)",
-  "",
-  "Админ (учитель/родком):",
-  "/iam_teacher — назначить себя учителем (ЛС)",
-  "/link_general <КЛАСС> — привязать ЭТОТ чат как общий",
-  "/link_parents <КЛАСС> — привязать ЭТОТ чат как чат родителей",
-  "/pickup_set <КЛАСС> ПН=13:30,ВТ=12:40,...  или  /pickup_set <КЛАСС> {JSON}  (добавь 'silent' в конце, чтобы не оповещать чаты)",
-  "/faq_add Вопрос | Ответ | ключ1, ключ2 | категория",
-  "/faq_del <номер>   /faq_list   /faq_export",
-  "/faq_import [append|replace] [JSON]",
-  "/faq_clear — очистить FAQ",
-  "/forward_unknown on|off — пересылать неизвестные вопросы учителю",
-  "",
-  "Учитель: фото расписания — подпись: #5А расписание на неделю",
-  "Учитель: фото автобусов — подпись: #5А автобусы ...",
-].join("\n");
+    "Команды:",
+    "/schedule — показать расписание",
+    "/buses — расписание автобусов",
+    "/pickup [день|класс] — во сколько забирать (по дням недели)",
+    "/pickup_week [класс] — время забора на всю неделю",
+    "/ask ВОПРОС — спросить бота (FAQ + пересылка учителю при необходимости)",
+    "/faq — список частых вопросов (кнопки/категории)",
+    "",
+    "Админ (учитель/родком):",
+    "/iam_teacher — назначить себя учителем (ЛС)",
+    "/link_general <КЛАСС> — привязать ЭТОТ чат как общий",
+    "/link_parents <КЛАСС> — привязать ЭТОТ чат как чат родителей",
+    "/pickup_set <КЛАСС> ПН=13:30,ВТ=12:40,...  или  /pickup_set <КЛАСС> {JSON}  (добавь 'silent' в конце, чтобы не оповещать чаты)",
+    "/faq_add Вопрос | Ответ | ключ1, ключ2 | категория",
+    "/faq_del <номер>   /faq_list   /faq_export",
+    "/faq_import [append|replace] [JSON]",
+    "/faq_clear — очистить FAQ",
+    "/forward_unknown on|off — пересылать неизвестные вопросы учителю",
+    "",
+    "Учитель: фото расписания — подпись: #5А расписание на неделю",
+    "Учитель: фото автобусов — подпись: #5А автобусы ...",
+  ].join("\n");
   await sendSafe("sendMessage", token, { chat_id: chatId, text });
 }
 async function cmdIamTeacher(env, token, msg, state) {
@@ -215,21 +225,16 @@ async function cmdSchedule(token, msg, state, args) {
   await sendSafe("sendPhoto", token, { chat_id: msg.chat.id, photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
 }
 
-/* ---------- Pickup (end-of-day times) ---------- */
-function formatPickupWeek(mapping) {
-  const order = ["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"];
-  const rows = order.map(d => `${d} — ${mapping?.[d] || "—"}`);
-  return rows.join("\n");
-}
+/* ======================= Pickup (время забора) ======================= */
 function parsePickupMapping(str) {
-  // ПН=13:30,ВТ=12:40,...  (разделители запятая/точка с запятой)
+  // ПН=13:30,ВТ=12:40,...  (разделители: запятая/точка с запятой)
   const out = {};
   const parts = str.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
   for (const p of parts) {
     const [kRaw, vRaw] = p.split("=").map(s=>s.trim());
     if (!kRaw || !vRaw) continue;
     const k = dayShortFromInput(kRaw) || kRaw.toUpperCase().slice(0,2);
-    if (!["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"].includes(k)) continue;
+    if (!DAY_SHORT.includes(k)) continue;
     if (!/^\d{1,2}:\d{2}$/.test(vRaw)) continue;
     out[k] = vRaw;
   }
@@ -240,6 +245,11 @@ function pickClassFromChat(state, chatId) {
     if (v.general_chat_id === chatId || v.parents_chat_id === chatId) return k;
   }
   return null;
+}
+function formatPickupWeek(mapping) {
+  const order = ["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"];
+  const rows = order.map(d => `${d} — ${mapping?.[d] || "—"}`);
+  return rows.join("\n");
 }
 async function cmdPickupSet(env, token, msg, state, args) {
   const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
@@ -253,38 +263,49 @@ async function cmdPickupSet(env, token, msg, state, args) {
   const rest = args.trim().slice(args.indexOf(parts[0]) + parts[0].length).trim();
   let mapping = null;
 
-  // JSON или пары ключ=значение
   if (rest.startsWith("{")) {
+    // JSON-формат
     try {
       const obj = JSON.parse(rest);
       const m = {};
       for (const [k,v] of Object.entries(obj || {})) {
         const kk = dayShortFromInput(k) || k.toString().toUpperCase().slice(0,2);
-        if (["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"].includes(kk) && /^\d{1,2}:\d{2}$/.test(v)) m[kk]=v;
+        if (DAY_SHORT.includes(kk) && /^\d{1,2}:\d{2}$/.test(v)) m[kk]=v;
       }
       mapping = Object.keys(m).length ? m : null;
     } catch(e) { mapping = null; }
   } else {
-    mapping = parsePickupMapping(rest);
+    // пары ключ=значение
+    mapping = parsePickupMapping(rest.replace(/\bsilent\b/i, "").trim());
   }
 
   if (!mapping) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Не удалось распознать времена. Пример: /pickup_set 5А ПН=13:30,ВТ=12:40" }); return; }
 
   state.classes[cls].pickup_times = mapping;
   await saveState(env, state);
+
   const pretty = Object.entries(mapping).map(([k,v])=>`${k}=${v}`).join(", ");
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Готово. Время забора для ${cls}: ${pretty}` });
-}
 
+  // Автооповещение в чаты (кроме режима silent)
+  const isSilent = /\bsilent\b/i.test(args);
+  if (!isSilent) {
+    const rec = state.classes[cls];
+    const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
+    if (targets.length) {
+      const note = `Обновлено время забора (${cls}):\n` + formatPickupWeek(mapping);
+      for (const chatId of targets) await sendSafe("sendMessage", token, { chat_id: chatId, text: note });
+    }
+  }
+}
 async function cmdPickup(token, msg, state, args) {
   let cls = pickClassFromChat(state, msg.chat.id);
   let day = null;
 
-  // распознаем аргументы: день и/или класс
   if (args) {
     const maybeClass = parseClassFrom(args);
-    if (maybeClass) { cls = maybeClass; }
-    const maybeDay = dayShortFromInput(args) || (/сегодня/.test(normalize(args)) ? todayRuShort() : null);
+    if (maybeClass) cls = maybeClass;
+    const maybeDay = dayShortFromInput(args) || (normalize(args).includes("сегодня") ? todayRuShort() : null);
     if (maybeDay) day = maybeDay;
   }
   if (!cls && msg.chat.type === "private") {
@@ -310,8 +331,23 @@ async function cmdPickup(token, msg, state, args) {
   }
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `${cls}: ${dayNameFull(d)} — забирать в ${t}` });
 }
+async function cmdPickupWeek(token, msg, state, args) {
+  let cls = pickClassFromChat(state, msg.chat.id);
+  if (!cls && msg.chat.type === "private") {
+    const found = parseClassFrom(args || "");
+    if (!found) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Укажите класс: /pickup_week 5А" }); return; }
+    cls = found;
+  }
+  if (!cls) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Чат не привязан к классу. Выполните /link_general 5А или /link_parents 5А." }); return; }
 
-/* ---------- Buses ---------- */
+  const rec = state.classes[cls] || {};
+  if (!rec.pickup_times) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Для ${cls} ещё не задано время забора. /pickup_set ${cls} ПН=13:30,...` }); return; }
+
+  const text = `Время забора на неделю — ${cls}:\n` + formatPickupWeek(rec.pickup_times);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text });
+}
+
+/* ======================= Buses ======================= */
 async function cmdBuses(token, msg, state, args) {
   let cls = pickClassFromChat(state, msg.chat.id);
   if (!cls && msg.chat.type === "private") {
@@ -326,40 +362,33 @@ async function cmdBuses(token, msg, state, args) {
   await sendSafe("sendPhoto", token, { chat_id: msg.chat.id, photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы ${cls}` });
 }
 
-/* ---------- FAQ ---------- */
+/* ======================= FAQ ======================= */
 async function cmdAsk(env, token, msg, state, args) {
   const q = args || "";
   if (!q) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Напишите вопрос после команды. Пример: /ask Когда начинаются уроки?" }); return; }
 
-  // Спец-обработка «во сколько забирать»:
+  // Спец-обработка вопросов «во сколько забирать»
   const n = normalize(q);
   if (/(забирать|забрать|во сколько.*заб)/.test(n)) {
-    // определить класс
     let cls = pickClassFromChat(state, msg.chat.id);
-    if (!cls) {
-      await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Чтобы ответить точно, укажите класс: /pickup 5А" });
-      return;
-    }
+    if (!cls) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Чтобы ответить точно, укажите класс: /pickup 5А" }); return; }
     const rec = state.classes[cls] || {};
     if (rec.pickup_times) {
       const d = todayRuShort();
       const t = rec.pickup_times[d];
-      if (t) {
-        await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `${cls}: сегодня (${dayNameFull(d)}) — забирать в ${t}` });
-        return;
-      }
+      if (t) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `${cls}: сегодня (${dayNameFull(d)}) — забирать в ${t}` }); return; }
     }
-    // если нет данных — провалимся в обычный FAQ/пересылку
+    // иначе — падаем в обычный FAQ/пересылку
   }
 
   const hit = bestFaqAnswer(state, q);
   if (hit) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Ответ:\n${hit.a}` }); return; }
+
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `Вопрос от ${msg.from?.first_name || "родителя"} (${msg.chat.id}):\n${q}` });
   }
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Пока не нашёл готового ответа. Я передал вопрос учителю. Вы получите ответ в чате 🙌" });
 }
-
 async function cmdFaq(token, msg, state) {
   const faqs = state.faq || [];
   if (!faqs.length) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "FAQ пока пуст. Админ может добавить через /faq_add" }); return; }
@@ -402,7 +431,41 @@ async function cmdFaqDel(env, token, msg, state, args) {
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Удалено ✅" });
 }
 
-/* ---------- Photo handlers ---------- */
+/* ===== Импорт/очистка FAQ (массово) ===== */
+function safeParseJson(s) { try { return [JSON.parse(s), null]; } catch (e) { return [null, e?.message || String(e)]; } }
+async function cmdFaqImport(env, token, msg, state, args) {
+  const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
+  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
+  let mode = "append";
+  let payload = args.trim();
+  if (payload.toLowerCase().startsWith("replace ")) { mode = "replace"; payload = payload.slice(8).trim(); }
+  else if (payload.toLowerCase().startsWith("append ")) { payload = payload.slice(6).trim(); }
+  if (!payload) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Формат: /faq_import [append|replace] [JSON]" }); return; }
+  const [data, err] = safeParseJson(payload);
+  if (err || !Array.isArray(data)) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Ошибка JSON или не массив." }); return; }
+  const added = [];
+  for (const raw of data) {
+    const q = (raw?.q || "").toString().trim();
+    const a = (raw?.a || "").toString().trim();
+    const kw = Array.isArray(raw?.kw) ? raw.kw.map(x=>x.toString().trim()).filter(Boolean)
+      : (typeof raw?.kw === "string" ? raw.kw.split(",").map(s=>s.trim()).filter(Boolean) : []);
+    const cat = (raw?.cat || "").toString().trim();
+    if (q && a) added.push({ q, a, kw, cat });
+  }
+  if (!added.length) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Нет валидных элементов (нужны q и a)." }); return; }
+  if (mode === "replace") state.faq = [];
+  state.faq = (state.faq || []).concat(added);
+  await saveState(env, state);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Импорт завершён: ${added.length}. Режим: ${mode.toUpperCase()}. Всего: ${(state.faq||[]).length}.` });
+}
+async function cmdFaqClear(env, token, msg, state) {
+  const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
+  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
+  state.faq = []; await saveState(env, state);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "FAQ очищен ✅" });
+}
+
+/* ======================= Фото-обработчик (расписание / автобусы) ======================= */
 async function handlePhotoFromTeacher(env, token, msg, state) {
   if (msg.chat.type !== "private") return;
   if (!state.teacher_id || state.teacher_id !== msg.from.id) {
@@ -413,8 +476,8 @@ async function handlePhotoFromTeacher(env, token, msg, state) {
   const cls = parseClassFrom(caption);
   if (!cls) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Добавьте в подпись класс, например: #5А ..." }); return; }
   ensureClass(state, cls);
-  const file_id = extractLargestPhotoId(msg.photo || []);
 
+  const file_id = extractLargestPhotoId(msg.photo || []);
   const isBuses = /автобус|bus/i.test(caption);
 
   if (isBuses) {
@@ -439,7 +502,7 @@ async function handlePhotoFromTeacher(env, token, msg, state) {
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `${isBuses ? "Автобусы" : "Расписание"} для ${cls} опубликовано в ${targets.length} чат(а/ов) ✅` });
 }
 
-/* ---------- Callback (FAQ UI) ---------- */
+/* ======================= Callback (FAQ UI) ======================= */
 function kbFaqItemsWrap(items, page, cat){ return kbFaqItems(items, page, 8, cat); }
 async function handleCallback(env, token, cb, state) {
   const chatId = cb.message.chat.id;
@@ -484,7 +547,7 @@ async function handleCallback(env, token, cb, state) {
   await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id });
 }
 
-/* ---------- Command router ---------- */
+/* ======================= Router ======================= */
 async function handleCommand(env, token, msg, state) {
   const chatId = msg.chat.id;
   const text = (msg.text || "").trim();
@@ -492,77 +555,44 @@ async function handleCommand(env, token, msg, state) {
   const args = rest.join(" ").trim();
 
   switch (cmd) {
-    case "/start": await cmdStart(token, chatId); return true;
-    case "/iam_teacher": await cmdIamTeacher(env, token, msg, state); return true;
-    case "/link_general": await cmdLink(token, msg, state, args, "link_general"); await saveState(env, state); return true;
-    case "/link_parents": await cmdLink(token, msg, state, args, "link_parents"); await saveState(env, state); return true;
-    case "/schedule": await cmdSchedule(token, msg, state, args); return true;
-    case "/buses": await cmdBuses(token, msg, state, args); return true;
-    case "/pickup_set": await cmdPickupSet(env, token, msg, state, args); return true;
-    case "/pickup": await cmdPickup(token, msg, state, args); return true;
-    case "/ask": await cmdAsk(env, token, msg, state, args); return true;
-    case "/faq": await cmdFaq(token, msg, state); return true;
-    case "/faq_list": await cmdFaqList(token, chatId, state); return true;
-    case "/faq_export": await cmdFaqExport(token, chatId, state); return true;
-    case "/faq_add": await cmdFaqAdd(env, token, msg, state, args); return true;
-    case "/faq_del": await cmdFaqDel(env, token, msg, state, args); return true;
-    case "/faq_import": await cmdFaqImport(env, token, msg, state, args); return true; // defined below
-    case "/faq_clear": await cmdFaqClear(env, token, msg, state); return true;        // defined below
+    case "/start":          await cmdStart(token, chatId);                          return true;
+    case "/iam_teacher":    await cmdIamTeacher(env, token, msg, state);            return true;
+    case "/link_general":   await cmdLink(token, msg, state, args, "link_general"); await saveState(env, state); return true;
+    case "/link_parents":   await cmdLink(token, msg, state, args, "link_parents"); await saveState(env, state); return true;
+    case "/schedule":       await cmdSchedule(token, msg, state, args);             return true;
+    case "/buses":          await cmdBuses(token, msg, state, args);                return true;
+    case "/pickup_set":     await cmdPickupSet(env, token, msg, state, args);       return true;
+    case "/pickup":         await cmdPickup(token, msg, state, args);               return true;
+    case "/pickup_week":    await cmdPickupWeek(token, msg, state, args);           return true;
+    case "/ask":            await cmdAsk(env, token, msg, state, args);             return true;
+    case "/faq":            await cmdFaq(token, msg, state);                        return true;
+    case "/faq_list":       await cmdFaqList(token, chatId, state);                 return true;
+    case "/faq_export":     await cmdFaqExport(token, chatId, state);               return true;
+    case "/faq_add":        await cmdFaqAdd(env, token, msg, state, args);          return true;
+    case "/faq_del":        await cmdFaqDel(env, token, msg, state, args);          return true;
+    case "/faq_import":     await cmdFaqImport(env, token, msg, state, args);       return true;
+    case "/faq_clear":      await cmdFaqClear(env, token, msg, state);              return true;
     default: return false;
   }
 }
 
-/* ---------- FAQ import / clear (from previous patch) ---------- */
-function safeParseJson(s) { try { return [JSON.parse(s), null]; } catch (e) { return [null, e?.message || String(e)]; } }
-async function cmdFaqImport(env, token, msg, state, args) {
-  const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
-  let mode = "append";
-  let payload = args.trim();
-  if (payload.toLowerCase().startsWith("replace ")) { mode = "replace"; payload = payload.slice(8).trim(); }
-  else if (payload.toLowerCase().startsWith("append ")) { payload = payload.slice(6).trim(); }
-  if (!payload) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Формат: /faq_import [append|replace] [JSON]" }); return; }
-  const [data, err] = safeParseJson(payload);
-  if (err || !Array.isArray(data)) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Ошибка JSON или не массив." }); return; }
-  const added = [];
-  for (const raw of data) {
-    const q = (raw?.q || "").toString().trim();
-    const a = (raw?.a || "").toString().trim();
-    const kw = Array.isArray(raw?.kw) ? raw.kw.map(x=>x.toString().trim()).filter(Boolean)
-      : (typeof raw?.kw === "string" ? raw.kw.split(",").map(s=>s.trim()).filter(Boolean) : []);
-    const cat = (raw?.cat || "").toString().trim();
-    if (q && a) added.push({ q, a, kw, cat });
-  }
-  if (!added.length) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Нет валидных элементов (нужны q и a)." }); return; }
-  if (mode === "replace") state.faq = [];
-  state.faq = (state.faq || []).concat(added);
-  await saveState(env, state);
-  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Импорт завершён: ${added.length}. Режим: ${mode.toUpperCase()}. Всего: ${(state.faq||[]).length}.` });
-}
-async function cmdFaqClear(env, token, msg, state) {
-  const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
-  state.faq = []; await saveState(env, state);
-  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "FAQ очищен ✅" });
-}
-
-/* ---------- Worker entry ---------- */
+/* ======================= Worker entry ======================= */
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const token = env.BOT_TOKEN;
 
-    // healthcheck
+    // Healthcheck
     if (url.pathname === "/") return OK("ok");
 
-    // ручная установка вебхука
+    // Установка вебхука (ручная)
     if (url.pathname === "/init" && request.method === "POST") {
       if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
       const res = await tg("setWebhook", token, { url: `${env.PUBLIC_URL}/webhook/${token}` });
       return new Response(JSON.stringify(res), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    // Telegram webhook
+    // Вебхук от Telegram
     if (url.pathname === `/webhook/${token}` && request.method === "POST") {
       const update = await request.json();
       const state = await loadState(env);
