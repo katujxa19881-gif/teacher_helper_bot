@@ -1,8 +1,8 @@
 // Cloudflare Worker: Telegram-бот для класса
-// Требует bindings/vars:
+// Bindings/vars:
 // - KV_BOT (KV Namespace)
 // - BOT_TOKEN (Secret)
-// - PUBLIC_URL (Text, без завершающего /, напр. https://teacher-helper.xxx.workers.dev)
+// - PUBLIC_URL (Text, без завершающего /)
 
 const OK = (body = "ok") => new Response(body, { status: 200 });
 const NO = (code = 404, body = "not found") => new Response(body, { status: code });
@@ -15,6 +15,18 @@ async function tg(method, token, payload) {
     body: JSON.stringify(payload),
   });
   return res.json();
+}
+
+// Диагностическая обёртка: логируем каждый вызов к Telegram
+async function sendSafe(method, token, payload) {
+  try {
+    const res = await tg(method, token, payload);
+    console.log("SEND", method, JSON.stringify(payload), "=>", JSON.stringify(res));
+    return res;
+  } catch (e) {
+    console.log("SEND ERROR", method, e?.toString?.() || e);
+    return null;
+  }
 }
 
 /* ---------- KV state ---------- */
@@ -102,42 +114,42 @@ function kbFaqItems(items, page = 0, perPage = 8, cat = "") {
 async function cmdStart(token, chatId) {
   const text = [
     "Команды:",
-    "/schedule — показать расписание (для привязанных чатов)",
+    "/schedule — показать расписание",
     "/ask ВОПРОС — спросить бота (FAQ + пересылка учителю при необходимости)",
-    "/faq — список частых вопросов (с кнопками и категориями)",
+    "/faq — список частых вопросов (кнопки/категории)",
     "",
     "Админ (учитель/родком):",
-    "/iam_teacher — назначить себя учителем (в ЛС)",
+    "/iam_teacher — назначить себя учителем (ЛС)",
     "/link_general <КЛАСС> — привязать ЭТОТ чат как общий",
     "/link_parents <КЛАСС> — привязать ЭТОТ чат как чат родителей",
     "/faq_add Вопрос | Ответ | ключ1, ключ2 | категория",
     "/faq_del <номер>",
-    "/faq_list — показать пронумерованный список FAQ",
+    "/faq_list — список FAQ",
     "/faq_export — экспорт FAQ (JSON)",
     "/forward_unknown on|off — пересылать неизвестные вопросы учителю",
     "",
     "Учитель: пришлите фото расписания в ЛС с подписью вида: #5А расписание на неделю",
   ].join("\n");
-  await tg("sendMessage", token, { chat_id: chatId, text });
+  await sendSafe("sendMessage", token, { chat_id: chatId, text });
 }
 async function cmdIamTeacher(env, token, msg, state) {
   if (msg.chat.type !== "private") {
-    await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Команда выполняется только в личке." });
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Команда выполняется только в личке." });
     return;
   }
   state.teacher_id = msg.from.id;
   await saveState(env, state);
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Вы назначены учителем ✅" });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Вы назначены учителем ✅" });
 }
 async function cmdLink(token, msg, state, args, kind) {
   const cls = parseClassFrom(args);
   if (!cls) {
-    await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Укажите класс, пример: /${kind} 5А` });
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Укажите класс, пример: /${kind} 5А` });
     return;
   }
   ensureClass(state, cls);
   state.classes[cls][kind === "link_general" ? "general_chat_id" : "parents_chat_id"] = msg.chat.id;
-  await tg("sendMessage", token, {
+  await sendSafe("sendMessage", token, {
     chat_id: msg.chat.id,
     text: `Привязано: ${kind === "link_general" ? "ОБЩИЙ" : "РОДИТЕЛИ"} чат для класса ${cls} ✅`,
   });
@@ -149,84 +161,84 @@ async function cmdSchedule(token, msg, state, args) {
   }
   if (!cls && msg.chat.type === "private") {
     const found = parseClassFrom(args);
-    if (!found) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Укажите класс: /schedule 5А" }); return; }
+    if (!found) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Укажите класс: /schedule 5А" }); return; }
     cls = found;
   }
-  if (!cls) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Этот чат не привязан к классу. Выполните /link_general 5А или /link_parents 5А." }); return; }
+  if (!cls) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Этот чат не привязан к классу. Выполните /link_general 5А или /link_parents 5А." }); return; }
   const rec = state.classes[cls];
-  if (!rec?.schedule_file_id) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Для ${cls} расписание ещё не загружено.` }); return; }
-  await tg("sendPhoto", token, { chat_id: msg.chat.id, photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
+  if (!rec?.schedule_file_id) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Для ${cls} расписание ещё не загружено.` }); return; }
+  await sendSafe("sendPhoto", token, { chat_id: msg.chat.id, photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
 }
 async function cmdAsk(env, token, msg, state, args) {
   const q = args || "";
-  if (!q) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Напишите вопрос после команды. Пример: /ask Когда начинаются уроки?" }); return; }
+  if (!q) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Напишите вопрос после команды. Пример: /ask Когда начинаются уроки?" }); return; }
   const hit = bestFaqAnswer(state, q);
-  if (hit) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Ответ:\n${hit.a}` }); return; }
+  if (hit) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Ответ:\n${hit.a}` }); return; }
   if (state.forward_unknown_to_teacher && state.teacher_id) {
-    await tg("sendMessage", token, { chat_id: state.teacher_id, text: `Вопрос от ${msg.from?.first_name || "родителя"} (${msg.chat.id}):\n${q}` });
+    await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `Вопрос от ${msg.from?.first_name || "родителя"} (${msg.chat.id}):\n${q}` });
   }
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Пока не нашёл готового ответа. Я передал вопрос учителю. Вы получите ответ в чате 🙌" });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Пока не нашёл готового ответа. Я передал вопрос учителю. Вы получите ответ в чате 🙌" });
 }
 async function cmdFaq(token, msg, state) {
   const faqs = state.faq || [];
-  if (!faqs.length) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "FAQ пока пуст. Админ может добавить через /faq_add" }); return; }
+  if (!faqs.length) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "FAQ пока пуст. Админ может добавить через /faq_add" }); return; }
   const cats = listCategories(state);
   if (cats.length) {
-    await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Выберите тему:", reply_markup: kbCategories(cats) });
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Выберите тему:", reply_markup: kbCategories(cats) });
     return;
   }
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Частые вопросы:", reply_markup: kbFaqItems(faqs, 0) });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Частые вопросы:", reply_markup: kbFaqItems(faqs, 0) });
 }
 async function cmdFaqList(token, chatId, state) {
   const faqs = state.faq || [];
-  if (!faqs.length) { await tg("sendMessage", token, { chat_id: chatId, text: "FAQ пуст." }); return; }
+  if (!faqs.length) { await sendSafe("sendMessage", token, { chat_id: chatId, text: "FAQ пуст." }); return; }
   const out = faqs.map((x, i) => `${i + 1}. ${x.q}${x.cat ? ` [${x.cat}]` : ""}`).join("\n");
-  for (let i = 0; i < out.length; i += 3500) await tg("sendMessage", token, { chat_id: chatId, text: out.slice(i, i + 3500) });
+  for (let i = 0; i < out.length; i += 3500) await sendSafe("sendMessage", token, { chat_id: chatId, text: out.slice(i, i + 3500) });
 }
 async function cmdFaqExport(token, chatId, state) {
   const json = JSON.stringify(state.faq || [], null, 2);
   for (let i = 0; i < json.length; i += 3500) {
-    await tg("sendMessage", token, { chat_id: chatId, text: "```json\n" + json.slice(i, i + 3500) + "\n```", parse_mode: "Markdown" });
+    await sendSafe("sendMessage", token, { chat_id: chatId, text: "```json\n" + json.slice(i, i + 3500) + "\n```", parse_mode: "Markdown" });
   }
 }
 async function cmdFaqAdd(env, token, msg, state, args) {
   const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может добавлять FAQ." }); return; }
+  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может добавлять FAQ." }); return; }
   const parts = args.split("|").map(s => s.trim());
-  if (parts.length < 2) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Формат: /faq_add Вопрос | Ответ | ключ1, ключ2 | категория" }); return; }
+  if (parts.length < 2) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Формат: /faq_add Вопрос | Ответ | ключ1, ключ2 | категория" }); return; }
   const [q, a] = [parts[0], parts[1]];
   const kw = (parts[2] || "").split(",").map(s => s.trim()).filter(Boolean);
   const cat = parts[3] || "";
   state.faq = state.faq || []; state.faq.push({ q, a, kw, cat }); await saveState(env, state);
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Добавлено в FAQ ✅" });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Добавлено в FAQ ✅" });
 }
 async function cmdFaqDel(env, token, msg, state, args) {
   const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может удалять FAQ." }); return; }
+  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может удалять FAQ." }); return; }
   const idx = parseInt(args, 10);
-  if (!state.faq || isNaN(idx) || idx < 1 || idx > state.faq.length) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Укажите номер записи: /faq_del 2" }); return; }
+  if (!state.faq || isNaN(idx) || idx < 1 || idx > state.faq.length) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Укажите номер записи: /faq_del 2" }); return; }
   state.faq.splice(idx - 1, 1); await saveState(env, state);
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Удалено ✅" });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Удалено ✅" });
 }
 async function cmdForwardUnknown(env, token, msg, state, args) {
   const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
+  if (!isTeacher) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Доступ только учителю." }); return; }
   const v = (args || "").trim().toLowerCase();
-  if (!["on", "off"].includes(v)) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Используйте: /forward_unknown on|off" }); return; }
+  if (!["on", "off"].includes(v)) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Используйте: /forward_unknown on|off" }); return; }
   state.forward_unknown_to_teacher = v === "on"; await saveState(env, state);
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Пересылка неизвестных вопросов: ${v === "on" ? "ВКЛ" : "ВЫКЛ"} ✅` });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Пересылка неизвестных вопросов: ${v === "on" ? "ВКЛ" : "ВЫКЛ"} ✅` });
 }
 
 /* ---------- Photo (schedule) ---------- */
 async function handlePhotoFromTeacher(env, token, msg, state) {
   if (msg.chat.type !== "private") return;
   if (!state.teacher_id || state.teacher_id !== msg.from.id) {
-    await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может загружать расписание. Введите /iam_teacher в личке." });
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может загружать расписание. Введите /iam_teacher в личке." });
     return;
   }
   const caption = msg.caption || "";
   const cls = parseClassFrom(caption);
-  if (!cls) { await tg("sendMessage", token, { chat_id: msg.chat.id, text: "Добавьте в подпись класс, например: #5А расписание на неделю" }); return; }
+  if (!cls) { await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Добавьте в подпись класс, например: #5А расписание на неделю" }); return; }
   ensureClass(state, cls);
   const file_id = extractLargestPhotoId(msg.photo || []);
   state.classes[cls].schedule_file_id = file_id;
@@ -237,11 +249,11 @@ async function handlePhotoFromTeacher(env, token, msg, state) {
   const rec = state.classes[cls];
   const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
   if (!targets.length) {
-    await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Сохранено для ${cls}, но чаты не привязаны.\nЗайдите в нужный чат и выполните:\n/link_general ${cls}\n/link_parents ${cls}` });
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Сохранено для ${cls}, но чаты не привязаны.\nЗайдите в нужный чат и выполните:\n/link_general ${cls}\n/link_parents ${cls}` });
     return;
   }
-  for (const chatId of targets) await tg("sendPhoto", token, { chat_id: chatId, photo: file_id, caption });
-  await tg("sendMessage", token, { chat_id: msg.chat.id, text: `Расписание для ${cls} опубликовано в ${targets.length} чат(а/ов) ✅` });
+  for (const chatId of targets) await sendSafe("sendPhoto", token, { chat_id: chatId, photo: file_id, caption });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Расписание для ${cls} опубликовано в ${targets.length} чат(а/ов) ✅` });
 }
 
 /* ---------- Callback (FAQ UI) ---------- */
@@ -253,8 +265,8 @@ async function handleCallback(env, token, cb, state) {
   if (kind === "faq_cat") {
     const cat = rest[0] || "";
     const items = (state.faq || []).filter(x => (x.cat || "") === cat);
-    if (!items.length) { await tg("answerCallbackQuery", token, { callback_query_id: cb.id, text: "В этой категории пока пусто" }); return; }
-    await tg("editMessageText", token, {
+    if (!items.length) { await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id, text: "В этой категории пока пусто" }); return; }
+    await sendSafe("editMessageText", token, {
       chat_id: chatId, message_id: cb.message.message_id,
       text: `Категория: ${cat}\nВыберите вопрос:`,
       reply_markup: kbFaqItems(items, 0, 8, cat),
@@ -266,11 +278,11 @@ async function handleCallback(env, token, cb, state) {
     const cat = rest[1] || "";
     const page = Math.max(0, parseInt(rest[2] || "0", 10));
     const items = cat ? (state.faq || []).filter(x => (x.cat || "") === cat) : (state.faq || []);
-    await tg("editMessageReplyMarkup", token, {
+    await sendSafe("editMessageReplyMarkup", token, {
       chat_id: chatId, message_id: cb.message.message_id,
       reply_markup: kbFaqItems(items, page, 8, cat),
     });
-    await tg("answerCallbackQuery", token, { callback_query_id: cb.id });
+    await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id });
     return;
   }
 
@@ -278,14 +290,14 @@ async function handleCallback(env, token, cb, state) {
     const idx = parseInt(rest[0] || "0", 10);
     const cat = rest[1] || "";
     const list = cat ? (state.faq || []).filter(x => (x.cat || "") === cat) : (state.faq || []);
-    if (!list[idx]) { await tg("answerCallbackQuery", token, { callback_query_id: cb.id, text: "Элемент не найден" }); return; }
+    if (!list[idx]) { await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id, text: "Элемент не найден" }); return; }
     const item = list[idx];
-    await tg("answerCallbackQuery", token, { callback_query_id: cb.id });
-    await tg("sendMessage", token, { chat_id: chatId, text: `Q: ${item.q}\n— — —\n${item.a}` });
+    await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id });
+    await sendSafe("sendMessage", token, { chat_id: chatId, text: `Q: ${item.q}\n— — —\n${item.a}` });
     return;
   }
 
-  await tg("answerCallbackQuery", token, { callback_query_id: cb.id });
+  await sendSafe("answerCallbackQuery", token, { callback_query_id: cb.id });
 }
 
 /* ---------- Command router ---------- */
@@ -321,7 +333,7 @@ export default {
     // healthcheck
     if (url.pathname === "/") return OK("ok");
 
-    // ручная установка вебхука, если нужно
+    // ручная установка вебхука
     if (url.pathname === "/init" && request.method === "POST") {
       if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
       const res = await tg("setWebhook", token, { url: `${env.PUBLIC_URL}/webhook/${token}` });
