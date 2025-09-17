@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "echo 'no build'",
+    "build": "echo \"no build step\"",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {}
