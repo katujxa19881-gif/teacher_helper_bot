@@ -278,4 +278,79 @@ async function handleCallback(env, token, cb, state) {
     const idx = parseInt(rest[0] || "0", 10);
     const cat = rest[1] || "";
     const list = cat ? (state.faq || []).filter(x => (x.cat || "") === cat) : (state.faq || []);
-    if (!list[idx]) { await
+    if (!list[idx]) { await tg("answerCallbackQuery", token, { callback_query_id: cb.id, text: "Элемент не найден" }); return; }
+    const item = list[idx];
+    await tg("answerCallbackQuery", token, { callback_query_id: cb.id });
+    await tg("sendMessage", token, { chat_id: chatId, text: `Q: ${item.q}\n— — —\n${item.a}` });
+    return;
+  }
+
+  await tg("answerCallbackQuery", token, { callback_query_id: cb.id });
+}
+
+/* ---------- Command router ---------- */
+async function handleCommand(env, token, msg, state) {
+  const chatId = msg.chat.id;
+  const text = (msg.text || "").trim();
+  const [cmd, ...rest] = text.split(/\s+/);
+  const args = rest.join(" ").trim();
+
+  switch (cmd) {
+    case "/start": await cmdStart(token, chatId); return true;
+    case "/iam_teacher": await cmdIamTeacher(env, token, msg, state); return true;
+    case "/link_general": await cmdLink(token, msg, state, args, "link_general"); await saveState(env, state); return true;
+    case "/link_parents": await cmdLink(token, msg, state, args, "link_parents"); await saveState(env, state); return true;
+    case "/schedule": await cmdSchedule(token, msg, state, args); return true;
+    case "/ask": await cmdAsk(env, token, msg, state, args); return true;
+    case "/faq": await cmdFaq(token, msg, state); return true;
+    case "/faq_list": await cmdFaqList(token, chatId, state); return true;
+    case "/faq_export": await cmdFaqExport(token, chatId, state); return true;
+    case "/faq_add": await cmdFaqAdd(env, token, msg, state, args); return true;
+    case "/faq_del": await cmdFaqDel(env, token, msg, state, args); return true;
+    case "/forward_unknown": await cmdForwardUnknown(env, token, msg, state, args); return true;
+    default: return false;
+  }
+}
+
+/* ---------- Worker entry ---------- */
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const token = env.BOT_TOKEN;
+
+    // healthcheck
+    if (url.pathname === "/") return OK("ok");
+
+    // ручная установка вебхука, если нужно
+    if (url.pathname === "/init" && request.method === "POST") {
+      if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
+      const res = await tg("setWebhook", token, { url: `${env.PUBLIC_URL}/webhook/${token}` });
+      return new Response(JSON.stringify(res), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    // Telegram webhook
+    if (url.pathname === `/webhook/${token}` && request.method === "POST") {
+      const update = await request.json();
+      const state = await loadState(env);
+
+      if (update.message?.text) {
+        const handled = await handleCommand(env, token, update.message, state);
+        if (handled) return OK();
+      }
+
+      if (update.message?.photo?.length) {
+        await handlePhotoFromTeacher(env, token, update.message, state);
+        return OK();
+      }
+
+      if (update.callback_query) {
+        await handleCallback(env, token, update.callback_query, state);
+        return OK();
+      }
+
+      return OK();
+    }
+
+    return NO();
+  },
+};
