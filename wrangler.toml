@@ -1,0 +1,11 @@
+name = "school-telegram-bot"
+main = "src/worker.js"
+compatibility_date = "2025-09-17"
+
+[[kv_namespaces]]
+binding = "KV_BOT"
+id = ""          # заполним после создания namespace
+preview_id = ""
+
+[vars]
+PUBLIC_URL = ""  # заполним после первого деплоя
