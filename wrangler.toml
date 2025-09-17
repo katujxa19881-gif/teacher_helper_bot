@@ -1,12 +1,6 @@
-name = "school-telegram-bot"
+name = "teacher-helper"
 main = "src/worker.js"
-compatibility_date = "2025-09-17"
+compatibility_date = "2024-09-01"
 
-# Привязка KV (создадим Namespace после деплоя и вставим id)
-[[kv_namespaces]]
-binding = "KV_BOT"
-id = ""          # вставь ID после создания namespace в Cloudflare
-preview_id = ""  # можно оставить пустым
-
-[vars]
-PUBLIC_URL = ""  # после первого деплоя укажи https://<имя>.workers.dev
+[observability.logs]
+enabled = true
