@@ -295,8 +295,32 @@ export default {
 
     // Вебхук от Telegram
     if (url.pathname === `/webhook/${token}` && request.method === "POST") {
-      const update = await request.json();
-      const state = await loadState(env);
+  const update = await request.json();
+  console.log("INCOMING UPDATE", JSON.stringify(update));
+
+  // ⚡️ Мгновенный пинг-ответ на любой апдейт
+  try {
+    const chatId =
+      update.message?.chat?.id ??
+      update.callback_query?.message?.chat?.id ??
+      update.my_chat_member?.chat?.id ??
+      update.channel_post?.chat?.id ??
+      null;
+
+    if (chatId) {
+      await tg("sendMessage", token, {
+        chat_id: chatId,
+        text: "Пинг: апдейт получен ✅",
+      });
+    } else {
+      console.log("No chatId in update");
+    }
+  } catch (e) {
+    console.log("Immediate ping send error", e?.toString?.() || e);
+  }
+
+  const state = await loadState(env);
+  // дальше оставляем вашу логику команд/фото/колбеков как было
 
       if (update.message?.text) {
         const handled = await handleCommand(env, token, update.message, state);
