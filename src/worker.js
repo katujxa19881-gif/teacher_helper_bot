@@ -108,7 +108,7 @@ function listCategories(state) {
 }
 
 /* ======================= Time helpers (Europe/Amsterdam) ======================= */
-const TZ = "Europe/Amsterdam";
+const TZ = "Europe/Kaliningrad";
 const DAY_SHORT = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"];
 const DAY_FULL  = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
 
@@ -551,7 +551,11 @@ async function handleCallback(env, token, cb, state) {
 async function handleCommand(env, token, msg, state) {
   const chatId = msg.chat.id;
   const text = (msg.text || "").trim();
-  const [cmd, ...rest] = text.split(/\s+/);
+
+  // было: const [cmd, ...rest] = text.split(/\s+/);
+  // стало — отрезаем @username у команды:
+  const [rawCmd, ...rest] = text.split(/\s+/);
+  const cmd = rawCmd.replace(/@[\w_]+$/i, "");  // <-- ключевая строка
   const args = rest.join(" ").trim();
 
   switch (cmd) {
