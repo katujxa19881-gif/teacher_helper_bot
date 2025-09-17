@@ -297,20 +297,8 @@ export default {
     if (url.pathname === `/webhook/${token}` && request.method === "POST") {
   const update = await request.json();
   console.log("INCOMING UPDATE", JSON.stringify(update));
-
-  // ⚡️ Мгновенный пинг-ответ на любой апдейт
-  try {
-    const chatId =
-      update.message?.chat?.id ??
-      update.callback_query?.message?.chat?.id ??
-      update.my_chat_member?.chat?.id ??
-      update.channel_post?.chat?.id ??
-      null;
- }
-
-  const state = await loadState(env);
-  // дальше оставляем вашу логику команд/фото/колбеков как было
-
+      }
+    
       if (update.message?.text) {
         const handled = await handleCommand(env, token, update.message, state);
         if (handled) return OK();
