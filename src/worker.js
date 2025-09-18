@@ -104,7 +104,7 @@ function listCategories(state) {
 }
 
 /* ---------- Time helpers ---------- */
-const TZ = "Europe/Amsterdam";
+const TZ = "Europe/Kaliningrad";
 const DAYS = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"];
 const DAYS_FULL = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
 
