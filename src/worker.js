@@ -1,8 +1,8 @@
 // Cloudflare Worker — Telegram бот «Учитель»
 // Требуется настроить в Worker bindings:
-//   - Secret: BOT_TOKEN
-//   - Plaintext: PUBLIC_URL   (без завершающего /)
-//   - KV namespace: KV_BOT
+// - Secret: BOT_TOKEN
+// - Plaintext: PUBLIC_URL (без завершающего /)
+// - KV namespace: KV_BOT
 //
 // Права бота в группе: админ (хотя бы право читать/писать).
 // У бота через @BotFather должен быть отключён Privacy Mode: /setprivacy → Disable.
@@ -258,10 +258,10 @@ async function cmdStart(token, chatId) {
     "/iam_teacher — назначить себя учителем (только ЛС боту)",
     "/link_general <КЛАСС> — привязать ЭТОТ чат как общий",
     "/link_parents <КЛАСС> — привязать ЭТОТ чат как чат родителей",
-    "/pickup_set <КЛАСС> ПН=13:30,ВТ=12:40,...  или JSON",
+    "/pickup_set <КЛАСС> ПН=13:30,ВТ=12:40,... или JSON",
     "/faq_add Вопрос | Ответ | ключ1, ключ2 | категория",
-    "/faq_del <номер>   /faq_list   /faq_export",
-    "/faq_import [append|replace] [JSON]   /faq_clear",
+    "/faq_del <номер> /faq_list /faq_export",
+    "/faq_import [append|replace] [JSON] /faq_clear",
     "/forward_unknown on|off — пересылать неизвестные вопросы учителю",
     "/persona_set Имя Фамилия — как будет подписываться бот",
     "/autoreply on|off — автоответы «как учитель»",
@@ -358,7 +358,7 @@ async function cmdPickupSet(env, token, msg, state, args) {
   const cls = parseClassFrom(parts[0] || "");
   if (!cls) {
     await sendToSameThread("sendMessage", token, msg, {
-      text: "Формат: /pickup_set 1Б ПН=13:30,ВТ=12:40,...  или JSON",
+      text: "Формат: /pickup_set 1Б ПН=13:30,ВТ=12:40,... или JSON",
     });
     return;
   }
@@ -908,33 +908,33 @@ async function handleCommand(env, token, msg, state) {
 
   switch (cmd) {
     case "/start": return await cmdStart(token, msg.chat.id), true;
-    case "/ping":  return await cmdPing(token, msg), true;
+    case "/ping": return await cmdPing(token, msg), true;
 
-    case "/iam_teacher":   return await cmdIamTeacher(env, token, msg, state), true;
-    case "/link_general":  return await cmdLink(token, msg, state, args, "link_general"), await saveState(env, state), true;
-    case "/link_parents":  return await cmdLink(token, msg, state, args, "link_parents"), await saveState(env, state), true;
+    case "/iam_teacher": return await cmdIamTeacher(env, token, msg, state), true;
+    case "/link_general": return await cmdLink(token, msg, state, args, "link_general"), await saveState(env, state), true;
+    case "/link_parents": return await cmdLink(token, msg, state, args, "link_parents"), await saveState(env, state), true;
 
-    case "/schedule":      return await cmdSchedule(token, msg, state, args), true;
-    case "/buses":         return await cmdBuses(token, msg, state, args), true;
+    case "/schedule": return await cmdSchedule(token, msg, state, args), true;
+    case "/buses": return await cmdBuses(token, msg, state, args), true;
 
-    case "/pickup_set":    return await cmdPickupSet(env, token, msg, state, args), true;
-    case "/pickup":        return await cmdPickup(token, msg, state, args), true;
-    case "/pickup_week":   return await cmdPickupWeek(token, msg, state, args), true;
+    case "/pickup_set": return await cmdPickupSet(env, token, msg, state, args), true;
+    case "/pickup": return await cmdPickup(token, msg, state, args), true;
+    case "/pickup_week": return await cmdPickupWeek(token, msg, state, args), true;
 
-    case "/ask":           return await cmdAsk(env, token, msg, state, args), true;
+    case "/ask": return await cmdAsk(env, token, msg, state, args), true;
 
-    case "/faq":           return await cmdFaq(token, msg, state), true;
-    case "/faq_list":      return await cmdFaqList(token, msg, state), true;
-    case "/faq_export":    return await cmdFaqExport(token, msg, state), true;
-    case "/faq_add":       return await cmdFaqAdd(env, token, msg, state, args), true;
-    case "/faq_del":       return await cmdFaqDel(env, token, msg, state, args), true;
-    case "/faq_import":    return await cmdFaqImport(env, token, msg, state, args), true;
-    case "/faq_clear":     return await cmdFaqClear(env, token, msg, state), true;
+    case "/faq": return await cmdFaq(token, msg, state), true;
+    case "/faq_list": return await cmdFaqList(token, msg, state), true;
+    case "/faq_export": return await cmdFaqExport(token, msg, state), true;
+    case "/faq_add": return await cmdFaqAdd(env, token, msg, state, args), true;
+    case "/faq_del": return await cmdFaqDel(env, token, msg, state, args), true;
+    case "/faq_import": return await cmdFaqImport(env, token, msg, state, args), true;
+    case "/faq_clear": return await cmdFaqClear(env, token, msg, state), true;
 
-    case "/persona_set":        return await cmdPersonaSet(env, token, msg, state, args), true;
-    case "/autoreply":          return await cmdAutoReply(env, token, msg, state, args), true;
+    case "/persona_set": return await cmdPersonaSet(env, token, msg, state, args), true;
+    case "/autoreply": return await cmdAutoReply(env, token, msg, state, args), true;
     case "/policy_absence_set": return await cmdPolicyAbsenceSet(env, token, msg, state, args), true;
-    case "/forward_unknown":    return await cmdForwardUnknown(env, token, msg, state, args), true;
+    case "/forward_unknown": return await cmdForwardUnknown(env, token, msg, state, args), true;
 
     default: return false;
   }
