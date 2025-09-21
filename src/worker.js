@@ -1,451 +1,388 @@
-// worker.js — Telegram bot (Cloudflare Workers) — V3.5 (fix bells & triggers)
+/**
+ * Telegram bot on Cloudflare Workers
+ * Features:
+ * - /init setWebhook
+ * - /ping
+ * - /iam_teacher in PM to appoint teacher
+ * - Save media by captions like "#1Б подвоз", "#1Б расписание уроков", "#1Б баланс карты", "#1Б пополнение карты"
+ *   Stores multiple files per key.
+ * - Keyword router (RU) → sends stored media + teacher-style text
+ * - Illness vs generic absence; forwards absence notice to teacher's PM
+ * - If no match → NO REPLY (returns 200 with empty body)
+ *
+ * KV keys:
+ *   TEACHER_ID                              -> string user id
+ *   PERSONA_NAME                            -> string (default "Ирина Владимировна")
+ *   CLASS_BY_CHAT:<chat_id>                 -> string class label, e.g., "1Б"
+ *   MEDIA::<class>::<slug>                  -> JSON [{type,file_id,caption?}, ...]
+ *
+ * Bindings required:
+ *   env.BOT_TOKEN (secret)
+ *   env.PUBLIC_URL (plain)
+ *   env.KV_BOT (KV namespace)
+ */
 
-const TG = (token, method, body) =>
-  fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  }).then((r) => r.json());
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      const url = new URL(request.url);
 
-const OK = () =>
-  new Response(JSON.stringify({ ok: true }), {
-    headers: { "content-type": "application/json" },
-  });
+      if (url.pathname === "/") {
+        return json({ ok: true, result: "teacher-helper alive" });
+      }
 
-const KV_KEY = "STATE_V3_5";
+      if (url.pathname === "/init") {
+        // set webhook
+        const ok = await setWebhook(env);
+        return json({ ok });
+      }
 
-// ---------- STATE ----------
-async function loadState(env) {
-  const raw = await env.KV_BOT.get(KV_KEY, "json");
-  const state =
-    raw || {
-      teacher_id: null,
-      teacher_display_name: "Ирина Владимировна",
-      default_class: null,
-      reply_prefix: true,
-      classes: {},
-    };
-  return state;
-}
-async function saveState(env, state) {
-  await env.KV_BOT.put(KV_KEY, JSON.stringify(state), {
-    expirationTtl: 60 * 60 * 24 * 365,
-  });
-}
-function ensureClass(state, cls) {
-  if (!state.classes[cls]) state.classes[cls] = {};
-  const r = state.classes[cls];
-  r.general_chat_id ??= null;
-  r.parents_chat_id ??= null;
+      // Telegram webhook endpoint: /webhook/<token>
+      if (url.pathname.startsWith("/webhook/")) {
+        const tokenInPath = url.pathname.split("/webhook/")[1];
+        if (!tokenInPath || !env.BOT_TOKEN || !tokenInPath.startsWith(env.BOT_TOKEN.slice(0, 10))) {
+          // не светим токен, просто 200
+          return json({ ok: true });
+        }
 
-  r.schedule_file_id ??= null;
-  r.schedule_caption ??= null;
-  r.last_update_iso ??= null;
+        if (request.method !== "POST") return json({ ok: true });
 
-  r.bus_file_id ??= null;
-  r.bus_caption ??= null;
+        const update = await request.json().catch(() => ({}));
+        // В логах оставим только тип
+        console.log("UPDATE kind=", kindOf(update));
 
-  r.podvoz_file_id ??= null;
-  r.podvoz_caption ??= null;
+        // Обрабатываем только сообщения/редактированные
+        const msg = update.message || update.edited_message;
+        if (!msg) return OK();
 
-  r.bells_file_id ??= null;
-  r.bells_caption ??= null;
+        const ctxObj = await makeCtx(env, msg);
 
-  r.card_balance_media ??= [];
-  r.card_topup_media ??= [];
+        // Commands
+        if (msg.text?.startsWith("/")) {
+          const handled = await handleCommand(env, ctxObj, msg.text.trim());
+          return handled ? OK() : OK();
+        }
 
-  r.pickup_times ??= null;
-}
+        // Saving media by caption "#КЛАСС ключ"
+        if (hasMedia(msg) && msg.caption) {
+          const saved = await trySaveMediaByCaption(env, ctxObj, msg);
+          if (saved) return OK();
+        }
 
-// ---------- UTILS ----------
-const norm = (s) => (s || "").toLowerCase().trim();
-const hasAny = (t, arr) => arr.some((w) => t.includes(w));
-const parseClassFrom = (s) => {
-  const m = (s || "").toUpperCase().match(/(\d{1,2})\s*([А-ЯA-Z])/u);
-  return m ? `${m[1]}${m[2]}` : null;
+        // Natural language router (only in groups/supergroups/chats; and PM if user writes)
+        const reacted = await handleNL(env, ctxObj, msg);
+        // If nothing matched — NO reply
+        return OK();
+      }
+
+      return new Response("Not found", { status: 404 });
+    } catch (e) {
+      console.error(e);
+      return new Response("ERR", { status: 200 });
+    }
+  },
 };
-function classFromText(text) {
-  const m = (text || "")
-    .toUpperCase()
-    .match(/(?:^|\s)[#ДЛЯПО]*\s*(\d{1,2}\s*[А-ЯA-Z])\b/u);
-  return parseClassFrom(m ? m[1] : null);
-}
-function pickClass(state, msg, textForFallback) {
-  for (const [cls, rec] of Object.entries(state.classes)) {
-    if (
-      rec.general_chat_id === msg.chat.id ||
-      rec.parents_chat_id === msg.chat.id
-    )
-      return cls;
-  }
-  const fromText = classFromText(textForFallback);
-  if (fromText && state.classes[fromText]) return fromText;
-  if (
-    msg.chat.type === "private" &&
-    state.default_class &&
-    state.classes[state.default_class]
-  )
-    return state.default_class;
-  const keys = Object.keys(state.classes);
-  if (keys.length === 1) return keys[0];
-  return null;
-}
-const makePrefix = (state, msg) => {
-  if (!state.reply_prefix) return msg.from?.username ? `@${msg.from.username},` : "";
-  const name = state.teacher_display_name || "Учитель";
-  return msg.from?.username ? `@${msg.from.username}, ${name}:` : `${name}:`;
-};
-async function sendToSameThread(method, token, msg, payload) {
-  const p = { ...payload };
-  if (msg.is_topic_message && msg.message_thread_id)
-    p.message_thread_id = msg.message_thread_id;
-  return TG(token, method, p);
-}
-const sendText = (token, msg, text) =>
-  sendToSameThread("sendMessage", token, msg, { chat_id: msg.chat.id, text });
 
-async function sendMediaToChat(token, chat_id, type, file_id, caption, msgForThread) {
-  const payload = { chat_id, caption };
-  if (type === "sendPhoto") payload.photo = file_id;
-  else if (type === "sendVideo") payload.video = file_id;
-  else payload.document = file_id;
-  if (msgForThread?.is_topic_message && msgForThread?.message_thread_id)
-    payload.message_thread_id = msgForThread.message_thread_id;
-  return TG(token, type, payload);
-}
-async function sendMediaListToChat(token, msg, list = [], fallbackCaption = "") {
-  for (const it of list || []) {
-    await sendMediaToChat(
-      token,
-      msg.chat.id,
-      it.type || "sendDocument",
-      it.file_id,
-      it.caption || fallbackCaption,
-      msg
-    );
-  }
-}
+/* ----------------- helpers ----------------- */
 
-// ---------- COMMANDS ----------
-async function cmdStart(env, token, msg, state) {
-  const text = `Команды:
-/schedule — показать расписание
-/buses — расписание автобусов/подвоза
-/iam_teacher — назначить себя учителем (ЛС)
-/link_general <КЛАСС> — привязать этот чат как общий
-/persona_set <Имя Отчество> — как подписывается бот
-/set_default_class <КЛАСС> — класс по умолчанию (для лички)
-/prefix on|off — подпись вида «Имя:»
-/card_media_clear <КЛАСС> balance|topup|both — очистить файлы по карте
+function json(obj) {
+  return new Response(JSON.stringify(obj), { headers: { "content-type": "application/json; charset=utf-8" } });
+}
+function OK() { return new Response("", { status: 200 }); }
 
-Учителю: присылайте файлы с подписями:
-#1Б расписание на неделю
-#1Б автобусы
-#1Б подвоз
-#1Б звонки
-#1Б баланс карты
-#1Б пополнение карты`;
-  await sendText(token, msg, text);
-}
-const cmdPing = (token, msg) => sendText(token, msg, "pong ✅");
-async function cmdIamTeacher(env, token, msg, state) {
-  if (msg.chat.type !== "private") return sendText(token, msg, "Эту команду — в личку боту.");
-  state.teacher_id = msg.from.id;
-  await saveState(env, state);
-  await sendText(token, msg, "Вы назначены учителем ✅");
-}
-async function cmdLinkGeneral(env, token, msg, state, args) {
-  if (state.teacher_id !== msg.from.id) return sendText(token, msg, "Доступ только учителю.");
-  const cls = parseClassFrom(args);
-  if (!cls) return sendText(token, msg, "Формат: /link_general 1Б");
-  ensureClass(state, cls);
-  state.classes[cls].general_chat_id = msg.chat.id;
-  await saveState(env, state);
-  await sendText(token, msg, `Привязано: ОБЩИЙ чат для класса ${cls} ✅`);
-}
-async function cmdPersonaSet(env, token, msg, state, args) {
-  if (state.teacher_id !== msg.from.id) return sendText(token, msg, "Доступ только учителю.");
-  const n = (args || "").trim();
-  if (!n) return sendText(token, msg, "Формат: /persona_set Имя Отчество");
-  state.teacher_display_name = n;
-  await saveState(env, state);
-  await sendText(token, msg, `Имя учителя установлено: ${n} ✅`);
-}
-async function cmdSetDefaultClass(env, token, msg, state, args) {
-  if (state.teacher_id !== msg.from.id) return sendText(token, msg, "Доступ только учителю.");
-  const cls = parseClassFrom(args);
-  if (!cls) return sendText(token, msg, "Формат: /set_default_class 1Б");
-  ensureClass(state, cls);
-  state.default_class = cls;
-  await saveState(env, state);
-  await sendText(token, msg, `Класс по умолчанию: ${cls} ✅`);
-}
-async function cmdPrefix(env, token, msg, state, args) {
-  if (state.teacher_id !== msg.from.id) return sendText(token, msg, "Доступ только учителю.");
-  const v = (args || "").toLowerCase().trim();
-  if (!["on", "off"].includes(v)) return sendText(token, msg, "Формат: /prefix on|off");
-  state.reply_prefix = v === "on";
-  await saveState(env, state);
-  await sendText(token, msg, `Подпись: ${state.reply_prefix ? "включена" : "выключена"} ✅`);
-}
-async function cmdCardMediaClear(env, token, msg, state, args) {
-  if (state.teacher_id !== msg.from.id) return sendText(token, msg, "Доступ только учителю.");
-  const [c, w] = (args || "").trim().split(/\s+/);
-  const cls = parseClassFrom(c || "");
-  const what = (w || "").toLowerCase();
-  if (!cls || !["balance", "topup", "both", "all"].includes(what))
-    return sendText(token, msg, "Формат: /card_media_clear 1Б balance|topup|both");
-  ensureClass(state, cls);
-  if (what === "balance" || what === "both" || what === "all") state.classes[cls].card_balance_media = [];
-  if (what === "topup" || what === "both" || what === "all") state.classes[cls].card_topup_media = [];
-  await saveState(env, state);
-  await sendText(token, msg, `Очищено: ${cls}, ${what}.`);
-}
-async function cmdSchedule(env, token, msg, state) {
-  const cls = pickClass(state, msg);
-  if (!cls) return;
-  const rec = state.classes[cls];
-  if (rec?.schedule_file_id) {
-    await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.schedule_file_id, rec.schedule_caption || "", msg);
-  }
-}
-async function cmdBuses(env, token, msg, state) {
-  const cls = pickClass(state, msg);
-  if (!cls) return;
-  const rec = state.classes[cls];
-  if (rec?.podvoz_file_id) {
-    await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.podvoz_file_id, rec.podvoz_caption || "", msg);
-  } else if (rec?.bus_file_id) {
-    await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.bus_file_id, rec.bus_caption || "", msg);
-  }
-}
-
-// ---------- MEDIA FROM TEACHER ----------
-function getIncomingMedia(msg) {
-  if (msg.photo?.length) return { type: "sendPhoto", file_id: msg.photo.at(-1).file_id };
-  if (msg.video) return { type: "sendVideo", file_id: msg.video.file_id };
-  if (msg.document) return { type: "sendDocument", file_id: msg.document.file_id };
-  return null;
-}
-
-// ВАЖНО: приоритет — сначала звонки/подвоз, затем автобусы, затем обычное расписание
-async function handleMediaFromTeacher(env, token, msg, state) {
-  if (!state.teacher_id || state.teacher_id !== msg.from.id) return false;
-  const media = getIncomingMedia(msg);
-  if (!media) return false;
-  const caption = msg.caption || "";
-  const m = caption.match(/^#\s*([0-9]{1,2}\s*[А-ЯA-Z])\s+(.+)$/u);
-  if (!m) return false;
-
-  const cls = parseClassFrom(m[1]);
-  const label = norm(m[2]);
-  ensureClass(state, cls);
-  const rec = state.classes[cls];
-
-  let saved = "";
-
-  // 1) ЗВОНКИ
-  if (/звонк/.test(label) || /перемен/.test(label)) {
-    rec.bells_file_id = media.file_id;
-    rec.bells_caption = caption;
-    saved = "звонки";
-  }
-  // 2) ПОДВОЗ
-  else if (/подвоз|пос[её]лок|поселок|посёлк/.test(label)) {
-    rec.podvoz_file_id = media.file_id;
-    rec.podvoz_caption = caption;
-    saved = "подвоз";
-  }
-  // 3) АВТОБУСЫ
-  else if (/автобус/.test(label)) {
-    rec.bus_file_id = media.file_id;
-    rec.bus_caption = caption;
-    saved = "автобусы";
-  }
-  // 4) РАСПИСАНИЕ УРОКОВ (но НЕ звонков)
-  else if (/расписан/.test(label) && !/звонк|перемен/.test(label)) {
-    rec.schedule_file_id = media.file_id;
-    rec.schedule_caption = caption;
-    rec.last_update_iso = new Date().toISOString();
-    saved = "расписание";
-  }
-  // 5) Баланс / пополнение карты
-  else if (/баланс.*карт|карт.*баланс/.test(label)) {
-    rec.card_balance_media.push({ type: media.type, file_id: media.file_id, caption });
-    saved = `balance — ${rec.card_balance_media.length}`;
-  } else if (/попол/.test(label) || /topup/.test(label)) {
-    rec.card_topup_media.push({ type: media.type, file_id: media.file_id, caption });
-    saved = `topup — ${rec.card_topup_media.length}`;
-  } else {
-    return true; // неизвестная подпись — ничего не ломаем
-  }
-
-  await saveState(env, state);
-  await sendText(token, msg, `Сохранено (${cls} — ${saved}).`);
+async function setWebhook(env) {
+  const url = `${env.PUBLIC_URL.replace(/\/+$/,'')}/webhook/${env.BOT_TOKEN}`;
+  const res = await tg(env, "setWebhook", { url });
+  console.log("setWebhook", await res.text());
   return true;
 }
 
-// ---------- NATURAL LANGUAGE ----------
-async function handleNaturalMessage(env, token, msg, state) {
-  const t = norm(msg.text || "");
-  if (!t) return false;
+function kindOf(u) {
+  if (u.message) return "message";
+  if (u.edited_message) return "edited_message";
+  if (u.my_chat_member) return "my_chat_member";
+  return "other";
+}
 
-  const prefix = makePrefix(state, msg);
-  const cls = pickClass(state, msg, msg.text);
-  if (!cls) return false;
-  const rec = state.classes[cls] || {};
+function hasMedia(m) {
+  return Boolean(m.photo?.length || m.video || m.animation || m.document || m.voice || m.audio);
+}
 
-  // Расписание уроков (шире)
-  if (
-    hasAny(t, ["расписан", "расписание"]) &&
-    !hasAny(t, ["автобус", "подвоз", "звонк", "перемен"])
-  ) {
-    if (rec.schedule_file_id) {
-      if (prefix) await sendText(token, msg, `${prefix} вот актуальное расписание. Если что-то изменится — сообщу заранее.`);
-      await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.schedule_file_id, rec.schedule_caption || "", msg);
-      return true;
-    }
-  }
+async function makeCtx(env, msg) {
+  const chat_id = msg.chat.id;
+  const from_id = msg.from?.id;
+  const username = msg.from?.username ? `@${msg.from.username}` : null;
+  const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
+  // class label bound to chat
+  let classLabel = await env.KV_BOT.get(`CLASS_BY_CHAT:${chat_id}`);
+  const teacherId = await env.KV_BOT.get("TEACHER_ID");
+  const persona = (await env.KV_BOT.get("PERSONA_NAME")) || "Ирина Владимировна";
 
-  // Автобусы / подвоз
-  if (hasAny(t, ["автобус", "автобусы", "подвоз", "поселок", "посёлк", "посёлков", "поселков"])) {
-    if (rec.podvoz_file_id) {
-      if (prefix) await sendText(token, msg, `${prefix} вот актуальное расписание подвоза. Если что-то изменится — сообщу заранее.`);
-      await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.podvoz_file_id, rec.podvoz_caption || "", msg);
-      return true;
-    } else if (rec.bus_file_id) {
-      if (prefix) await sendText(token, msg, `${prefix} вот актуальное расписание автобусов. Если что-то изменится — сообщу заранее.`);
-      await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.bus_file_id, rec.bus_caption || "", msg);
-      return true;
-    }
-  }
+  return { env, chat_id, from_id, username, isGroup, classLabel, teacherId, persona };
+}
 
-  // Звонки / перемена
-  if (hasAny(t, ["перемен", "звонок", "звонки", "расписание звонков", "во сколько заканч", "когда заканч", "когда перемена"])) {
-    if (rec.bells_file_id) {
-      if (prefix) await sendText(token, msg, `${prefix} приложила расписание звонков.`);
-      await sendMediaToChat(token, msg.chat.id, "sendDocument", rec.bells_file_id, rec.bells_caption || "", msg);
-      return true;
-    }
-  }
+/* ---------- Commands ---------- */
 
-  // Баланс карты
-  if (
-    (hasAny(t, ["баланс", "проверить баланс", "остаток", "сколько денег"]) && hasAny(t, ["карта", "карты", "школьн", "питани"])) ||
-    hasAny(t, ["баланс карты", "баланс школьной карты", "баланс питания", "как проверить баланс карты"])
-  ) {
-    if (rec.card_balance_media?.length) {
-      if (prefix) await sendText(token, msg, `${prefix} инструкция — как проверить баланс школьной карты.`);
-      await sendMediaListToChat(token, msg, rec.card_balance_media, "");
-      return true;
-    }
-  }
+async function handleCommand(env, ctx, text) {
+  const cmd = text.split(/\s+/)[0];
+  const args = text.slice(cmd.length).trim();
 
-  // Пополнение карты
-  if (
-    (hasAny(t, ["пополнить", "пополнение", "зачислить"]) && hasAny(t, ["карта", "карты", "школьн", "питани"])) ||
-    hasAny(t, ["пополнение карты", "пополнить школьную карту", "как пополнить карту", "как пополнить баланс карты"])
-  ) {
-    if (rec.card_topup_media?.length) {
-      if (prefix) await sendText(token, msg, `${prefix} инструкция — как пополнить школьную карту.`);
-      await sendMediaListToChat(token, msg, rec.card_topup_media, "");
-      return true;
-    }
-  }
-
-  // Болезнь / отсутствие
-  const isSick = hasAny(t, ["заболел", "заболела", "болеет", "болею", "простыл", "простыла", "температур", "насморк", "кашель", "сопл"]);
-  const isAbsence = hasAny(t, ["не будет", "не придем", "не придём", "отсутств", "пропустит", "не сможем прийти", "пропускаем", "не пойдём", "не пойдем"]);
-  if (isSick || isAbsence) {
-    if (isSick) {
-      if (prefix) await sendText(token, msg, `${prefix} Выздоравливайте 🙌 Придите в школу со справкой от врача.`);
-    } else {
-      if (prefix) await sendText(token, msg, `${prefix} Приняла. Сообщите, пожалуйста, причину отсутствия в личные сообщения.`);
-    }
-    if (state.teacher_id) {
-      const who = msg.from?.first_name
-        ? `${msg.from.first_name}${msg.from.last_name ? " " + msg.from.last_name : ""}`
-        : "Родитель";
-      const notify = `🔔 Уведомление: ${who} написал(а) в чате ${cls}:\n«${msg.text}»`;
-      await TG(env.BOT_TOKEN, "sendMessage", { chat_id: state.teacher_id, text: notify });
-    }
+  if (cmd === "/ping") {
+    await replyTeacher(ctx, "pong ✅");
     return true;
   }
 
-  // Приветствия — просто чтобы было живо
-  if (hasAny(t, ["привет", "здравствуйте", "добрый день", "доброе утро", "добрый вечер"])) {
-    if (prefix) await sendText(token, msg, `${prefix} здравствуйте!`);
+  if (cmd === "/iam_teacher") {
+    // назначить пользователя учителем — ТОЛЬКО в ЛС
+    if (ctx.isGroup) {
+      await replyTeacher(ctx, "Эта команда — только в личных сообщениях.");
+      return true;
+    }
+    await env.KV_BOT.put("TEACHER_ID", String(ctx.from_id));
+    await replyTeacher(ctx, "Вы назначены учителем ✅");
+    return true;
+  }
+
+  // Админ (учитель) может привязывать класс к текущему чату:
+  if (cmd === "/link_general") {
+    if (String(ctx.from_id) !== String(ctx.teacherId)) return true;
+    if (!ctx.isGroup) { await replyTeacher(ctx, "Команда работает в групповом чате."); return true; }
+    if (!args) { await replyTeacher(ctx, "Укажите класс, пример: /link_general 1Б"); return true; }
+    await env.KV_BOT.put(`CLASS_BY_CHAT:${ctx.chat_id}`, args);
+    await sendText(ctx.chat_id, `${ctx.persona}: Привязано: ОБЩИЙ чат для класса ${escape(args)} ✅`, ctx.env);
+    return true;
+  }
+
+  // /persona_set Имя Отчество
+  if (cmd === "/persona_set") {
+    if (String(ctx.from_id) !== String(ctx.teacherId)) return true;
+    if (!args) { await replyTeacher(ctx, "Укажите подпись, например: /persona_set Ирина Владимировна"); return true; }
+    await env.KV_BOT.put("PERSONA_NAME", args);
+    await replyTeacher(ctx, `Подпись установлена: ${args}`);
     return true;
   }
 
   return false;
 }
 
-// ---------- ROUTER ----------
-async function handleCommand(env, token, msg, state) {
-  const text = (msg.text || "").trim();
-  const [cmd, ...rest] = text.split(/\s+/);
-  const args = rest.join(" ");
-  switch (cmd) {
-    case "/start": return cmdStart(env, token, msg, state), true;
-    case "/ping": return cmdPing(token, msg), true;
-    case "/iam_teacher": return cmdIamTeacher(env, token, msg, state), true;
-    case "/link_general": return cmdLinkGeneral(env, token, msg, state, args), true;
-    case "/persona_set": return cmdPersonaSet(env, token, msg, state, args), true;
-    case "/set_default_class": return cmdSetDefaultClass(env, token, msg, state, args), true;
-    case "/prefix": return cmdPrefix(env, token, msg, state, args), true;
-    case "/card_media_clear": return cmdCardMediaClear(env, token, msg, state, args), true;
-    case "/schedule": return cmdSchedule(env, token, msg, state), true;
-    case "/buses": return cmdBuses(env, token, msg, state), true;
-    default: return false;
-  }
-}
-async function handleUpdate(env, token, update) {
-  if (!update.message) return;
-  const msg = update.message;
-  const state = await loadState(env);
+/* ---------- Media save by caption "#КЛАСС ключ" ---------- */
 
-  if ((msg.photo || msg.video || msg.document) && msg.caption) {
-    const done = await handleMediaFromTeacher(env, token, msg, state);
-    if (done) return;
+async function trySaveMediaByCaption(env, ctx, msg) {
+  // Сохраняем, только если отправитель - учитель (в любом чате) ИЛИ любая ЛС боту (чтобы тебе было удобно)
+  const allow =
+    String(ctx.from_id) === String(ctx.teacherId) ||
+    (msg.chat.type === "private");
+
+  if (!allow) return false;
+
+  const m = msg.caption.match(/#\s*([0-9А-ЯA-Zа-яёЁ]+)\s+(.+)/i);
+  if (!m) return false;
+
+  const classLabel = m[1].trim();
+  const keyHuman = m[2].trim();
+  const slug = slugify(keyHuman);
+
+  const files = await env.KV_BOT.get(`MEDIA::${classLabel}::${slug}`, "json") || [];
+
+  // extract file_id/type
+  const item = extractFileItem(msg);
+  if (!item) return false;
+
+  files.push(item);
+  await env.KV_BOT.put(`MEDIA::${classLabel}::${slug}`, JSON.stringify(files));
+
+  // Подтверждение
+  await sendText(ctx.chat_id, `Сохранено (${classLabel} — ${slug}).`, env);
+  // Подсказываем подписать класс (если это не похоже на хештег с классом)
+  if (!/#\s*[0-9А-ЯA-Zа-яёЁ]+\s*/.test(keyHuman)) {
+    await sendText(ctx.chat_id, `Добавьте в подпись класс, например: #${classLabel} …`, env);
   }
-  if (msg.text && msg.text.startsWith("/")) {
-    const handled = await handleCommand(env, token, msg, state);
-    if (handled) return;
-  }
-  if (msg.text) {
-    const handled = await handleNaturalMessage(env, token, msg, state);
-    if (handled) return;
-  }
+  return true;
 }
 
-// ---------- WORKER ----------
-export default {
-  async fetch(request, env) {
-    if (!env.BOT_TOKEN || !env.PUBLIC_URL)
-      return new Response("Need BOT_TOKEN and PUBLIC_URL", { status: 500 });
+function extractFileItem(msg) {
+  if (msg.photo?.length) {
+    const fid = msg.photo.sort((a, b) => (a.file_size || 0) - (b.file_size || 0)).pop().file_id;
+    return { type: "photo", file_id: fid };
+  }
+  if (msg.video) return { type: "video", file_id: msg.video.file_id };
+  if (msg.animation) return { type: "animation", file_id: msg.animation.file_id };
+  if (msg.document) return { type: "document", file_id: msg.document.file_id };
+  if (msg.voice) return { type: "voice", file_id: msg.voice.file_id };
+  if (msg.audio) return { type: "audio", file_id: msg.audio.file_id };
+  return null;
+}
 
-    const url = new URL(request.url);
+function slugify(s) {
+  const map = { "ё": "е" };
+  return s
+    .toLowerCase()
+    .replace(/[Ёё]/g, (ch) => map[ch])
+    .replace(/[^a-z0-9а-я\s_-]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .trim();
+}
 
-    if (url.pathname === "/init") {
-      const hook = `${env.PUBLIC_URL.replace(/\/+$/, "")}/webhook/${env.BOT_TOKEN}`;
-      const res = await TG(env.BOT_TOKEN, "setWebhook", {
-        url: hook,
-        allowed_updates: ["message", "edited_message", "callback_query", "my_chat_member", "chat_member"],
-      });
-      return new Response(JSON.stringify(res), { headers: { "content-type": "application/json" } });
-    }
+/* ---------- NLU / keyword router ---------- */
 
-    if (url.pathname === `/webhook/${env.BOT_TOKEN}` && request.method === "POST") {
-      const update = await request.json();
-      try {
-        await handleUpdate(env, env.BOT_TOKEN, update);
-      } catch (e) {
-        console.error(e);
+async function handleNL(env, ctx, msg) {
+  const text = (msg.text || msg.caption || "").trim();
+  if (!text) return false;
+
+  // refresh class for this chat (fallback: if teacher writes in PM and gave a class in text like "#1Б ..." — мы не трогаем)
+  if (!ctx.classLabel && ctx.isGroup) {
+    ctx.classLabel = await env.KV_BOT.get(`CLASS_BY_CHAT:${ctx.chat_id}`);
+  }
+
+  const lower = normalize(text);
+
+  // 1) Illness vs absence
+  const illness = /(забол(ел|ела|ели)|боле(ет|ем)|температур|насморк|сопл|кашля?)/i.test(lower);
+  const absence = /(не\s*будет|не\s*прид[её]т|отсутств|пропустит|пропуск)/i.test(lower);
+
+  if (illness) {
+    await say(ctx, `${ctx.persona}: Выздоравливайте 🙌 Придите в школу со справкой от врача.`, env);
+    await notifyTeacher(env, ctx, msg, "Отсутствие по болезни");
+    return true;
+  }
+  if (absence) {
+    await say(ctx, `${ctx.persona}: Приняла. Сообщите, пожалуйста, причину отсутствия в личные сообщения.`, env);
+    await notifyTeacher(env, ctx, msg, "Отсутствие (не болезнь)");
+    return true;
+  }
+
+  // 2) SCHEDULE (уроки/звонки/перемены)
+  if (/(расписани|урок(и|ов)|завтра уроки|звонк|перемен|во сколько заканчива(ет|ются)|когда окончан|когда перемен)/i.test(lower)) {
+    const keysTry = ["расписание уроков", "расписание", "звонки", "расписание звонков"];
+    const sent = await sendMediaByKeys(env, ctx, keysTry, `@${msg.from?.username || ""} ${ctx.persona}: вот актуальное расписание. Если что-то изменится — сообщу заранее.`.replace("@ ", "@"));
+    if (sent) return true;
+    return false;
+  }
+
+  // 3) BUSES / ПОДВОЗ
+  if (/(подвоз|автобус|автобусы|с пос[её]лк|рейс)/i.test(lower)) {
+    const keysTry = ["подвоз", "автобусы", "расписание автобусов"];
+    const sent = await sendMediaByKeys(env, ctx, keysTry, `${ctx.persona}: вот актуальное расписание. Если что-то изменится — сообщу заранее.`);
+    if (sent) return true;
+    return false;
+  }
+
+  // 4) PICKUP (когда забирать)
+  if (/(во сколько забира|когда забира|когда уход|когда домой|когда забор)/i.test(lower)) {
+    // если есть заготовка «когда забирать» — пришлём картинку; иначе короткий ответ
+    const sent = await sendMediaByKeys(env, ctx, ["когда забирать", "забор", "уход домой"], `${ctx.persona}: вот подсказка по времени забора. Если появятся изменения — напишу заранее.`);
+    if (sent) return true;
+    await say(ctx, `${ctx.persona}: подскажу по времени забора. Если нужна картинка — пришлю.`, env);
+    return true;
+  }
+
+  // 5) CARD balance / topup
+  if (/(баланс.*карт|проверить.*баланс|сколько.*на.*карт|карта.*баланс)/i.test(lower)) {
+    const sent = await sendMediaByKeys(env, ctx, ["баланс карты", "card_balance"], `${ctx.persona}: вот как проверить баланс школьной карты.`);
+    return !!sent;
+  }
+  if (/(как.*пополн(ить|яю)|пополнени[ея].*карт|пополнить карту|оплата по реквизит|через сбер)/i.test(lower)) {
+    const sent = await sendMediaByKeys(env, ctx, ["пополнение карты", "card_topup"], `${ctx.persona}: вот способы пополнения карты.`);
+    return !!sent;
+  }
+
+  // 6) Домашка / «что задали»
+  if (/(домашн|дз|что задали|д\/з)/i.test(lower)) {
+    await say(ctx, `${ctx.persona}: уточняем у детей. Иногда дублирую ДЗ в чат после уроков. Если что-то потерялось — напишите, уточню.`, env);
+    return true;
+  }
+
+  // Не распознали → молчим
+  return false;
+}
+
+function normalize(t) {
+  return t.toLowerCase().replace(/[ё]/g, "е").trim();
+}
+
+/* ---------- Sending helpers ---------- */
+
+async function say(ctx, text, env) {
+  return sendText(ctx.chat_id, text, env);
+}
+
+async function replyTeacher(ctx, text) {
+  return sendText(ctx.chat_id, text, ctx.env);
+}
+
+async function notifyTeacher(env, ctx, msg, title) {
+  if (!ctx.teacherId) return;
+  const who = ctx.username ? `(${ctx.username})` : "";
+  const chatRef = ctx.classLabel ? `Класс: ${ctx.classLabel}` : `Чат: ${ctx.chat_id}`;
+  const txt =
+    `🔔 ${title}\n` +
+    `${chatRef}\n` +
+    `Сообщение: "${(msg.text || msg.caption || "").slice(0, 400)}" ${who}`;
+  await sendText(ctx.teacherId, txt, env);
+}
+
+async function sendText(chat_id, text, env) {
+  await tg(env, "sendMessage", {
+    chat_id,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  });
+}
+
+async function sendMediaByKeys(env, ctx, keysTry, fallbackText) {
+  if (!ctx.classLabel) return false;
+  for (const key of keysTry) {
+    const slug = slugify(key);
+    const arr = await env.KV_BOT.get(`MEDIA::${ctx.classLabel}::${slug}`, "json");
+    if (arr && arr.length) {
+      // если несколько — отправим по одному (mediaGroup для photo+video тоже ок, но у Telegram есть ограничения; делаем надёжно)
+      for (const item of arr) {
+        await sendSingleMedia(env, ctx.chat_id, item, fallbackText);
+        // текст только на первом
+        fallbackText = undefined;
       }
-      return OK();
+      return true;
     }
+  }
+  return false;
+}
 
-    return new Response("OK");
-  },
-};
+async function sendSingleMedia(env, chat_id, item, caption) {
+  const base = { chat_id };
+  if (caption) base.caption = caption;
+  switch (item.type) {
+    case "photo":
+      await tg(env, "sendPhoto", { ...base, photo: item.file_id });
+      break;
+    case "video":
+      await tg(env, "sendVideo", { ...base, video: item.file_id });
+      break;
+    case "animation":
+      await tg(env, "sendAnimation", { ...base, animation: item.file_id });
+      break;
+    case "document":
+      await tg(env, "sendDocument", { ...base, document: item.file_id });
+      break;
+    case "voice":
+      await tg(env, "sendVoice", { ...base, voice: item.file_id });
+      break;
+    case "audio":
+      await tg(env, "sendAudio", { ...base, audio: item.file_id });
+      break;
+    default:
+      break;
+  }
+}
+
+/* ---------- Telegram call ---------- */
+
+function tg(env, method, payload) {
+  const url = `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
+  return fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
