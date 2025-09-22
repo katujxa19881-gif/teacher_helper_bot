@@ -276,9 +276,26 @@ async function handleMediaFromTeacher(env, token, msg, state){
         if (it.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: it.file_id, caption: cap });
         else if (it.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: it.file_id, caption: cap });
         else if (it.type === "animation") await sendSafe("sendAnimation", token, { chat_id: chatId, animation: it.file_id, caption: cap });
+        else if (topic === "card_topup") {
+    // Для пополнения карты — отправляем КОМПЛЕКТ (весь набор по теме)
+    const set = state.classes[cls].media.card_topup || [];
+    for (const chatId of targets) {
+      for (const it of set) {
+        if (it.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: it.file_id, caption: cap });
+        else if (it.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: it.file_id, caption: cap });
+        else if (it.type === "animation") await sendSafe("sendAnimation", token, { chat_id: chatId, animation: it.file_id, caption: cap });
         else if (it.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: it.file_id, caption: cap });
       }
     }
+  } else {
+    // Остальные темы — только загруженный сейчас файл
+    for (const chatId of targets) {
+      if (item.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: item.file_id, caption: cap });
+      else if (item.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: item.file_id, caption: cap });
+      else if (item.type === "animation") await sendSafe("sendAnimation",token, { chat_id: chatId, animation: item.file_id, caption: cap });
+      else if (item.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: item.file_id, caption: cap });
+    }
+  }
   }
  
   /* ---------- Natural language handling ---------- */
