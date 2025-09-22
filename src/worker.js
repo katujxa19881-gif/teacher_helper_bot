@@ -279,16 +279,7 @@ async function handleMediaFromTeacher(env, token, msg, state){
         else if (it.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: it.file_id, caption: cap });
       }
     }
-  } else {
-    // Остальные темы — только загруженный сейчас файл (чтоб не спамить)
-    for (const chatId of targets) {
-      if (item.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: item.file_id, caption: cap });
-      else if (item.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: item.file_id, caption: cap });
-      else if (item.type === "animation") await sendSafe("sendAnimation",token, { chat_id: chatId, animation: item.file_id, caption: cap });
-      else if (item.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: item.file_id, caption: cap });
-    }
-  }
-
+ 
   /* ---------- Natural language handling ---------- */
 function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
 function extractTimeFlexible(text){ const m=text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
