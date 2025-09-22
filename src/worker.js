@@ -279,6 +279,7 @@ async function handleMediaFromTeacher(env, token, msg, state){
         else if (it.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: it.file_id, caption: cap });
       }
     }
+  }
  
   /* ---------- Natural language handling ---------- */
 function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
