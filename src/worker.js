@@ -239,64 +239,102 @@ async function cmdTeachClear(env, token, msg, state){
   await sendToSameThread("sendMessage", token, msg, {text:"Очищено ✅"});
 }
 
-/* ---------- Media from teacher (PM) ---------- */
-async function handleMediaFromTeacher(env, token, msg, state){
-  if (msg.chat.type!=="private") return;
-  if (!state.teacher_id || state.teacher_id!==msg.from.id){
-    await sendSafe("sendMessage", token, {chat_id: msg.chat.id, text:"Только учитель может загружать. Используйте /iam_teacher в личке."});
+/* ---------------- Фото/видео/документы от учителя ---------------- */
+async function handleMediaFromTeacher(env, token, msg, state) {
+  if (msg.chat.type !== "private") return;
+  if (!state.teacher_id || state.teacher_id !== msg.from.id) {
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Только учитель может загружать материалы. Введите /iam_teacher в личке." });
     return;
   }
-  const cap = msg.caption || "";
-  const cls = parseClassFrom(cap) || state.default_class || "1Б";
-  const topic = topicFromCaption(cap);
-  const item = mkFileItemFromMessage(msg);
 
-  if(!topic){
-    await sendSafe("sendMessage", token, {chat_id: msg.chat.id, text:"Не удалось понять раздел. В подписи укажите: «#1Б расписание уроков/звонков», «#1Б автобусы/подвоз», «#1Б пополнить карту», «#1Б баланс карты»."});
-    return;
-  }
-  if(!item){
-    await sendSafe("sendMessage", token, {chat_id: msg.chat.id, text:"Пришлите фото/видео/гиф/документ с подписью (#КЛАСС тема)."});
-    return;
-  }
+  const caption = msg.caption || "";
+  const cls = parseClassFrom(caption) || "1Б"; // класс по умолчанию
   ensureClass(state, cls);
-  // заменяем на актуальный список для темы
-  state.classes[cls].media[topic] ||= [];
-  state.classes[cls].media[topic] = [...state.classes[cls].media[topic], item]; // накапливаем файл
+
+  const file_id =
+    extractLargestPhotoId(msg.photo || []) ||
+    msg.video?.file_id ||
+    msg.animation?.file_id ||
+    msg.document?.file_id;
+
+  if (!file_id) {
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: "Файл не распознан." });
+    return;
+  }
+
+  // Определяем тему по подписи
+  let topic = null;
+  if (/автобус|bus/i.test(caption)) topic = "buses";
+  else if (/звонок|перемен/i.test(caption)) topic = "bells";
+  else if (/урок|расписан/i.test(caption)) topic = "schedule";
+  else if (/баланс|пополни|карта/i.test(caption)) topic = "card_topup";
+
+  const item = {
+    type: msg.photo ? "photo" : msg.video ? "video" : msg.animation ? "animation" : "document",
+    file_id,
+    caption,
+  };
+
+  // Сохраняем в state
+  if (topic === "buses") {
+    state.classes[cls].bus_file_id = file_id;
+    state.classes[cls].bus_caption = caption;
+  } else if (topic === "schedule") {
+    state.classes[cls].schedule_file_id = file_id;
+    state.classes[cls].schedule_caption = caption;
+    state.classes[cls].last_update_iso = new Date().toISOString();
+  } else if (topic === "bells") {
+    state.classes[cls].bells_file_id = file_id;
+    state.classes[cls].bells_caption = caption;
+  } else if (topic === "card_topup") {
+    if (!state.classes[cls].media) state.classes[cls].media = {};
+    if (!state.classes[cls].media.card_topup) state.classes[cls].media.card_topup = [];
+    state.classes[cls].media.card_topup.push(item); // копим комплект
+  }
+
   await saveState(env, state);
 
-  // Публикация в привязанные чаты
-  const targets = [state.classes[cls].general_chat_id, state.classes[cls].parents_chat_id].filter(Boolean);
+  // Чаты для публикации
+  const rec = state.classes[cls];
+  const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
+  if (!targets.length) {
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Сохранено для ${cls}, но чаты не привязаны. /link_general ${cls} и /link_parents ${cls}` });
+    return;
+  }
+
+  const cap = caption || "";
 
   if (topic === "card_topup") {
-    // Для пополнения карты — отправляем КОМПЛЕКТ (весь набор по теме)
+    // Для пополнения карты — публикуем ВСЕ скринкасты по теме
     const set = state.classes[cls].media.card_topup || [];
     for (const chatId of targets) {
       for (const it of set) {
-        if (it.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: it.file_id, caption: cap });
-        else if (it.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: it.file_id, caption: cap });
-        else if (it.type === "animation") await sendSafe("sendAnimation", token, { chat_id: chatId, animation: it.file_id, caption: cap });
-        else if (topic === "card_topup") {
-    // Для пополнения карты — отправляем КОМПЛЕКТ (весь набор по теме)
-    const set = state.classes[cls].media.card_topup || [];
-    for (const chatId of targets) {
-      for (const it of set) {
-        if (it.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: it.file_id, caption: cap });
-        else if (it.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: it.file_id, caption: cap });
-        else if (it.type === "animation") await sendSafe("sendAnimation", token, { chat_id: chatId, animation: it.file_id, caption: cap });
-        else if (it.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: it.file_id, caption: cap });
+        if (it.type === "photo")
+          await sendSafe("sendPhoto", token, { chat_id: chatId, photo: it.file_id, caption: it.caption });
+        else if (it.type === "video")
+          await sendSafe("sendVideo", token, { chat_id: chatId, video: it.file_id, caption: it.caption });
+        else if (it.type === "animation")
+          await sendSafe("sendAnimation", token, { chat_id: chatId, animation: it.file_id, caption: it.caption });
+        else if (it.type === "document")
+          await sendSafe("sendDocument", token, { chat_id: chatId, document: it.file_id, caption: it.caption });
       }
     }
   } else {
-    // Остальные темы — только загруженный сейчас файл
+    // Остальные темы — только последний загруженный файл
     for (const chatId of targets) {
-      if (item.type === "photo") await sendSafe("sendPhoto", token, { chat_id: chatId, photo: item.file_id, caption: cap });
-      else if (item.type === "video") await sendSafe("sendVideo", token, { chat_id: chatId, video: item.file_id, caption: cap });
-      else if (item.type === "animation") await sendSafe("sendAnimation",token, { chat_id: chatId, animation: item.file_id, caption: cap });
-      else if (item.type === "document") await sendSafe("sendDocument", token, { chat_id: chatId, document: item.file_id, caption: cap });
+      if (item.type === "photo")
+        await sendSafe("sendPhoto", token, { chat_id: chatId, photo: item.file_id, caption: cap });
+      else if (item.type === "video")
+        await sendSafe("sendVideo", token, { chat_id: chatId, video: item.file_id, caption: cap });
+      else if (item.type === "animation")
+        await sendSafe("sendAnimation", token, { chat_id: chatId, animation: item.file_id, caption: cap });
+      else if (item.type === "document")
+        await sendSafe("sendDocument", token, { chat_id: chatId, document: item.file_id, caption: cap });
     }
   }
-  }
+
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `${topic === "card_topup" ? "Скринкаст" : "Файл"} для ${cls} опубликован ✅` });
+}
  
   /* ---------- Natural language handling ---------- */
 function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
