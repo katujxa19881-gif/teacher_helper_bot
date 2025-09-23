@@ -116,7 +116,7 @@ function ensureClass(state, cls) {
     // времена
     pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка
-    snack_times: null // полдник
+    snack_times: null, // полдник
   };
 
   for (const [k, v] of Object.entries(defaults)) {
