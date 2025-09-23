@@ -109,7 +109,6 @@ if (!state.classes) state.classes = {};
     bells_caption: null,
     bus_file_id: null,
     bus_caption: null,
-
 // три независимых набора "времён"
     pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка / ГПД
