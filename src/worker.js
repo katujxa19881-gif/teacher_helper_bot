@@ -96,25 +96,30 @@ async function loadState(env) {
 async function saveState(env, state) { await env.KV_BOT.put("state", JSON.stringify(state)); }
 
 ffunction ensureClass(state, cls) {
-if (!state.classes) state.classes = {};
+  if (!state.classes) state.classes = {};
 
-// значения по умолчанию
+  // значения по умолчанию
   const defaults = {
-// привязки чатов
+    // привязки чатов
     general_chat_id: null,
-// медиа: расписание уроков, звонков, автобус
+
+    // медиа: расписание уроков, звонков, автобус
     schedule_file_id: null,
     schedule_caption: null,
     bells_file_id: null,
     bells_caption: null,
     bus_file_id: null,
-    bus_caption: null,    
-// три независимых набора "времён"
+    bus_caption: null,
+
+    // три независимых набора "времён"
     pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка / ГПД
     snack_times: null // полдник
-// создаём запись класса, не затирая уже сохранённые поля
+  };
+
+  // создаём запись класса, не затирая уже сохранённые поля
   state.classes[cls] = Object.assign({}, defaults, state.classes[cls] || {});
+}
 
 /* ---------------- Утилиты ---------------- */
 const DAYS = ["ВС","ПН","ВТ","СР","ЧТ","ПТ","СБ"];
