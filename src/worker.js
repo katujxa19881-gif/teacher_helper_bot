@@ -395,14 +395,25 @@ async function handleNaturalMessage(env, token, msg, state){
     return true;
   }
 
-  // Во сколько заканчиваются уроки
-  if (/(во сколько|до скольки|когда).*(заканч|кончат|окончан).*(урок)/.test(t)){
+  // Во сколько заканчивается урок(и)
+  // Если в тексте есть "заканчивается/закончат"+"урок" — приоритет: расписание звонков (фото)
+  if (/(во сколько|когда|до скольки).*(заканч|кончат).*(урок)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+    const rec = state.classes[cls] || {};
+    if (rec.bells_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.bells_file_id,
+        caption: rec.bells_caption || `Звонки ${cls}`
+      });
+      return true;
+    }
+    // если звонков нет — попробуем ответить временем "забирать" (как раньше)
     const r = resolvePickupNatural(state, msg, raw, state.teacher_display_name);
-    if (r.ok){
-      await sendToSameThread("sendMessage", token, msg, { text:r.text });
+    if (r.ok) {
+      await sendToSameThread("sendMessage", token, msg, { text: r.text });
       await rememberContext(env, msg, "bot", r.text);
     }
-    return true; // по условию молчим, если не знаем
+    return true;
   }
 
   // «во сколько забирать»
@@ -427,7 +438,30 @@ async function handleNaturalMessage(env, token, msg, state){
     if (items.length){ await sendMediaItems(token, msg, items); }
     return true;
   }
-
+  // «какие уроки [сегодня|завтра|в <день>]» — присылаем фото расписания уроков
+  if (/(какие|что за).*(урок|предмет)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+    const rec = state.classes[cls] || {};
+    // если в тексте есть явный день — просто показываем расписание (без мудрёной фильтрации по дням)
+    // т.к. у нас хранится фото всего расписания.
+    const dayTok = dayShortFromInput(raw); // 'ПН','ВТ',... либо null; распознаёт и "сегодня/завтра"
+    if (rec.schedule_file_id && (dayTok || /(сегодня|завтра)/.test(t))) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.schedule_file_id,
+        caption: rec.schedule_caption || `Расписание ${cls}`
+      });
+      return true;
+    }
+    // также реагируем просто на вопрос про «какие уроки» без дня — присылаем то же расписание
+    if (rec.schedule_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.schedule_file_id,
+        caption: rec.schedule_caption || `Расписание ${cls}`
+      });
+      return true;
+    }
+    return true;
+  }
   // Расписание уроков — по фразам "какие уроки сегодня/завтра/в среду"
   const dayInText = /(сегодня|завтра|понедельник|вторник|среда|четверг|пятница|суббота|воскресенье)/.test(t);
   if (/(какие|что за).*(урок|предмет)/.test(t) && (dayInText || /расписан/.test(t))){
@@ -448,12 +482,15 @@ async function handleNaturalMessage(env, token, msg, state){
     return true;
   }
 
-  // Автобусы / подвоз
-  if (/(расписани.*автобус|подвоз)/.test(t)){
+  // «расписание автобусов» / «автобусы» / «подвоз»
+  if (/(расписани[ея].*автобус|автобус(ы|ов)?|подвоз)/.test(t)) {
     const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-    const rec = state.classes[cls]||{};
-    if (rec.bus_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption||`Автобусы ${cls}` });
+    const rec = state.classes[cls] || {};
+    if (rec.bus_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.bus_file_id,
+        caption: rec.bus_caption || `Автобусы ${cls}`
+      });
     }
     return true;
   }
