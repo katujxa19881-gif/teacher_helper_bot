@@ -79,6 +79,8 @@ function ensureClass(state, cls) {
       schedule_file_id: null, schedule_caption: null, // уроки
       bells_file_id: null, bells_caption: null, // звонки
       bus_file_id: null, bus_caption: null, // автобусы
+      shuttle_file_id: null, shuttle_caption: null, // подвоз
+
 
       // три независимых набора времен (уроки/продленка/полдник)
       pickup_times: null, // основное "во сколько забирать"
@@ -298,20 +300,23 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Звонки для ${cls} опубликованы ✅` });
     return true;
   }
-  if (/\b(автобус|автобусов|подвоз|поселки|bus)\b/.test(n)){
-    state.classes[cls].bus_file_id = file_id;
-    state.classes[cls].bus_caption = caption;
-    await saveState(env, state);
-    await publishSingleFileToClassChats(token, state, cls, file_id, caption);
-    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Автобусы для ${cls} опубликованы ✅` });
-    return true;
-  }
-  // расписание уроков
-  state.classes[cls].schedule_file_id = file_id;
-  state.classes[cls].schedule_caption = caption;
+  // ШКОЛЬНЫЙ ПОДВОЗ (организованный, в школу и из школы)
+if (/\b(подвоз|школьн(ый|ые|ого)|шк-?автобус|школ.*автобус)\b/.test(n)) {
+  state.classes[cls].shuttle_file_id = file_id;
+  state.classes[cls].shuttle_caption = caption;
   await saveState(env, state);
   await publishSingleFileToClassChats(token, state, cls, file_id, caption);
-  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Расписание для ${cls} опубликовано ✅` });
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Подвоз (школьный) для ${cls} опубликован ✅` });
+  return true;
+}
+
+// ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ АВТОБУСЫ
+if (/\b(автобус(ы)?|маршрут(ы)?|городск(ой|ие)|муниципал|bus|№\s*\d+)\b/.test(n)) {
+  state.classes[cls].bus_file_id = file_id;
+  state.classes[cls].bus_caption = caption;
+  await saveState(env, state);
+  await publishSingleFileToClassChats(token, state, cls, file_id, caption);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Автобусы (городские) для ${cls} опубликованы ✅` });
   return true;
 }
 
@@ -474,19 +479,32 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «расписание автобусов» / «подвоз»
-if (/(расписани[ея].*автобус|автобус[а-я]*|подвоз|поселки)/.test(t)) {
+// ПОДВОЗ (школьные автобусы)
+if (/\b(подвоз|школьн(ый|ые)|шк-?автобус|школ.*автобус)\b/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.shuttle_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
+  } else if (rec.bus_file_id) {
+    // мягкий фолбэк, чтобы не молчать
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
+  } else {
+    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} подвоз (школьный)».` });
+  }
+  return true;
+}
+
+// АВТОБУСЫ (городские/муниципальные)
+if (/\b(автобус(ы)?|расписани[ея].*автобус|маршрут(ы)?|городск(ой|ие)|муниципал|bus|№\s*\d+)\b/.test(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
   const rec = state.classes[cls] || {};
   if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.bus_file_id,
-      caption: rec.bus_caption || `Подвоз / автобусы — ${cls}`
-    });
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы — ${cls}` });
+  } else if (rec.shuttle_file_id) {
+    // фолбэк в другую коллекцию
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)" });
   } else {
-    await sendToSameThread("sendMessage", token, msg, {
-      text: `Для ${cls} пока нет актуального файла «автобусы/подвоз». Учитель может загрузить в ЛС с подписью «${cls} автобусы».`
-    });
+    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} автобусы (городские)».` });
   }
   return true;
 }
