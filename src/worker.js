@@ -99,28 +99,26 @@ function ensureClass(state, cls) {
   if (!state.classes) state.classes = {};
   if (!state.classes[cls]) state.classes[cls] = {};
 
-  // Гарантируем поля под все три «расписания-времени»
-  state.classes[cls] = {
-    ...state.classes[cls],
-    pickup_times: state.classes[cls]?.pickup_times || null, // уроки (main)
-    aftercare_times: state.classes[cls]?.aftercare_times || null, // продлёнка / ГПД
-    snack_times: state.classes[cls]?.snack_times || null, // полдник
-  };
-}
+  const rec = state.classes[cls];
 
-  // Фото-ресурсы
-  rec.schedule_file_id ??= null; // расписание уроков
+  // Привязки чатов (оставляем как есть, если уже задано)
+  rec.general_chat_id ??= null;
+  rec.parents_chat_id ??= null;
+
+  // Медиа: расписание уроков, звонков, автобусов
+  rec.schedule_file_id ??= null;
   rec.schedule_caption ??= null;
-  rec.bells_file_id ??= null; // расписание звонков
+
+  rec.bells_file_id ??= null;
   rec.bells_caption ??= null;
-  rec.bus_file_id ??= null; // автобусы/подвоз
+
+  rec.bus_file_id ??= null;
   rec.bus_caption ??= null;
 
-  // ТРИ независимых расписания времени (во сколько забирать/окончание и т.п.)
-  rec.pickup ??= { main: null, gpd: null, snack: null };
-
-  // Медиатека тем (скринкасты/фото) — topup, balance
-  if (!state.media[cls]) state.media[cls] = { topup: [], balance: [] };
+  // Три независимых набора "времён"
+  rec.pickup_times ??= null; // уроки (main)
+  rec.aftercare_times ??= null; // продлёнка / ГПД
+  rec.snack_times ??= null; // полдник
 }
 
 /* ---------------- Утилиты ---------------- */
