@@ -100,8 +100,8 @@ ffunction ensureClass(state, cls) {
   
      // значения по умолчанию
      const defaults = {
-    
-              // привязки чатов
+       
+       // привязки чатов
     general_chat_id: null,
 
 // медиа: расписание уроков, звонков, автобус
