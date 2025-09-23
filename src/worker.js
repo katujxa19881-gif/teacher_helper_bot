@@ -299,9 +299,9 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     await publishSingleFileToClassChats(token, state, cls, file_id, caption);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Звонки для ${cls} опубликованы ✅` });
     return true;
-  }
+}
   // ШКОЛЬНЫЙ ПОДВОЗ (организованный, в школу и из школы)
-if (/\b(подвоз|школьн(ый|ые|ого)|шк-?автобус|школ.*автобус)\b/.test(n)) {
+ if (/\b(подвоз|школьн(ый|ые|ого)|шк-?автобус|школ.*автобус)\b/.test(n)) {
   state.classes[cls].shuttle_file_id = file_id;
   state.classes[cls].shuttle_caption = caption;
   await saveState(env, state);
