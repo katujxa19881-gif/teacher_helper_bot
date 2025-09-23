@@ -357,19 +357,23 @@ async function cmdPickupSet(env, token, msg, state, args) {
     if (cand !== "main") scope = cand;
   }
 
-  // 3) «Хвост» — начинаем строго с первого <ДЕНЬ>=
+// 3) «Хвост» — начинаем строго с ПЕРВЫХ БУКВ <ДЕНЬ>=
 let rest;
-const m = args.match(/(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС)\s*=/i); // <= правильная регэксп
-if (m && typeof m.index === "number") {
-  rest = args.slice(m.index).trim(); // режем ровно с "ПН=..."
+const dayRe = /(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС)\s*=/i;
+const m = dayRe.exec(args);
+
+if (m) {
+  // позиция именно букв дня, без пробела/запятой слева
+  const startAt = m.index + m[0].toUpperCase().indexOf(m[1].toUpperCase());
+  rest = args.slice(startAt).trim();
 } else {
-  // fallback: когда пришёл JSON или нет пар "ДЕНЬ="
-  const afterClass = args.indexOf(parts[0]) + parts[0].length;
-  const afterType = parts[1]
-    ? args.indexOf(parts[1], afterClass) + parts[1].length
-    : afterClass;
-  rest = args.slice(afterType).trim();
+  // fallback на старую логику (для JSON-блока и т.п.)
+  const parts = (args || "").trim().split(/\s+/).filter(Boolean); // [класс, метка? ...]
+  const hasLabel = parts[1] && /^(уроки|продл[её]нка|гпд|полдник)$/i.test(parts[1]);
+  const restStart = args.indexOf(parts[0]) + parts[0].length + (hasLabel ? args.indexOf(parts[1]) - args.indexOf(parts[0]) - parts[0].length + parts[1].length : 0);
+  rest = args.slice(restStart).trim();
 }
+
 
   // 4) Разбор в mapping { ПН: "12:15", ВТ: "11:40", ... }
   let mapping = null;
