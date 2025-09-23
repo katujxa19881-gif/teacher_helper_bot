@@ -95,16 +95,16 @@ async function loadState(env) {
 }
 async function saveState(env, state) { await env.KV_BOT.put("state", JSON.stringify(state)); }
 
-ffunction ensureClass(state, cls) {
-    if (!state.classes) state.classes = {};
-  
-     // значения по умолчанию
-     const defaults = {
-       
-       // привязки чатов
-    general_chat_id: null,
+function ensureClass(state, cls) {
+  if (!state.classes) state.classes = {};
+  if (!state.classes[cls]) state.classes[cls] = {};
 
-// медиа: расписание уроков, звонков, автобус
+  const defaults = {
+    // Привязки чатов
+    general_chat_id: null,
+    parents_chat_id: null,
+
+    // Медиа: расписание уроков, звонков, автобусов
     schedule_file_id: null,
     schedule_caption: null,
     bells_file_id: null,
@@ -112,14 +112,14 @@ ffunction ensureClass(state, cls) {
     bus_file_id: null,
     bus_caption: null,
 
-// три независимых набора "времён"
-    pickup_times: null, // уроки (основное)
+    // Три независимых набора "времени"
+    pickup_times: null, // уроки (основное расписание)
     aftercare_times: null, // продлёнка / ГПД
     snack_times: null // полдник
   };
 
-// создаём запись класса, не затирая уже сохранённые поля
-  state.classes[cls] = Object.assign({}, defaults, state.classes[cls] || {});
+  // Дополняем недостающие поля значениями по умолчанию
+  state.classes[cls] = { ...defaults, ...state.classes[cls] };
 }
 
 /* ---------------- Утилиты ---------------- */
