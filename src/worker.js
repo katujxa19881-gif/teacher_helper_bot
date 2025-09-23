@@ -751,3 +751,52 @@ case "/media_clear": {
 default:
   return false;
 }
+}
+
+/* ---------- entry ---------- */
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const token = env.BOT_TOKEN;
+
+    if (url.pathname === "/") return OK("ok");
+
+    // init webhook
+    if (url.pathname === "/init" && (request.method === "GET" || request.method === "POST")) {
+      if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
+      const res = await tg("setWebhook", token, {
+        url: `${env.PUBLIC_URL}/webhook/${token}`,
+        allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member", "chat_member"],
+        max_connections: 40,
+        drop_pending_updates: false
+      });
+      return new Response(JSON.stringify(res), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (url.pathname === `/webhook/${token}` && request.method === "POST") {
+      let update;
+      try { update = await request.json(); } catch { return NO(400, "bad json"); }
+      const state = await loadState(env);
+
+      // Текстовые команды / натуральные фразы
+      if (update.message?.text) {
+        const handled = await handleCommand(env, token, update.message, state);
+        if (handled) return OK();
+        const human = await handleNaturalMessage(env, token, update.message, state);
+        if (human) return OK();
+        // молчим
+        return OK();
+      }
+
+      // Медиа от учителя (ЛС)
+      if (update.message && (update.message.photo?.length || update.message.video || update.message.document || update.message.audio || update.message.voice)) {
+        await handleMediaFromTeacher(env, token, update.message, state);
+        return OK();
+      }
+
+      return OK();
+    }
+
+    return NO();
+  }
+};
