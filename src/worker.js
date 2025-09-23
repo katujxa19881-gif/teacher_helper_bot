@@ -98,28 +98,26 @@ async function saveState(env, state) { await env.KV_BOT.put("state", JSON.string
 function ensureClass(state, cls) {
   if (!state.classes) state.classes = {};
   if (!state.classes[cls]) state.classes[cls] = {};
+  const rec = state.classes[cls];
 
-  const defaults = {
-    // Привязки чатов
-    general_chat_id: null,
-    parents_chat_id: null,
+  // Привязки чатов
+  if (typeof rec.general_chat_id === "undefined") rec.general_chat_id = null;
+  if (typeof rec.parents_chat_id === "undefined") rec.parents_chat_id = null;
 
-    // Медиа: расписание уроков, звонков, автобусов
-    schedule_file_id: null,
-    schedule_caption: null,
-    bells_file_id: null,
-    bells_caption: null,
-    bus_file_id: null,
-    bus_caption: null,
+  // Медиа: расписание уроков, звонков, автобусов
+  if (typeof rec.schedule_file_id === "undefined") rec.schedule_file_id = null;
+  if (typeof rec.schedule_caption === "undefined") rec.schedule_caption = null;
 
-    // Три независимых набора "времени"
-    pickup_times: null, // уроки (основное расписание)
-    aftercare_times: null, // продлёнка / ГПД
-    snack_times: null // полдник
-  };
+  if (typeof rec.bells_file_id === "undefined") rec.bells_file_id = null;
+  if (typeof rec.bells_caption === "undefined") rec.bells_caption = null;
 
-  // Дополняем недостающие поля значениями по умолчанию
-  state.classes[cls] = { ...defaults, ...state.classes[cls] };
+  if (typeof rec.bus_file_id === "undefined") rec.bus_file_id = null;
+  if (typeof rec.bus_caption === "undefined") rec.bus_caption = null;
+
+  // Три независимых набора "времени"
+  if (typeof rec.pickup_times === "undefined") rec.pickup_times = null; // уроки (основное)
+  if (typeof rec.aftercare_times === "undefined") rec.aftercare_times = null; // продлёнка / ГПД
+  if (typeof rec.snack_times === "undefined") rec.snack_times = null; // полдник
 }
 
 /* ---------------- Утилиты ---------------- */
