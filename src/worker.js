@@ -95,30 +95,31 @@ async function loadState(env) {
 }
 async function saveState(env, state) { await env.KV_BOT.put("state", JSON.stringify(state)); }
 
-function ensureClass(state, cls) {
+ffunction ensureClass(state, cls) {
   if (!state.classes) state.classes = {};
-  if (!state.classes[cls]) state.classes[cls] = {};
 
-  const rec = state.classes[cls];
+  // значения по умолчанию
+  const defaults = {
+    // привязки чатов
+    general_chat_id: null,
+    parents_chat_id: null,
 
-  // Привязки чатов
-  if (typeof rec.general_chat_id === "undefined") rec.general_chat_id = null;
-  if (typeof rec.parents_chat_id === "undefined") rec.parents_chat_id = null;
+    // медиа: расписание уроков, звонков, автобус
+    schedule_file_id: null,
+    schedule_caption: null,
+    bells_file_id: null,
+    bells_caption: null,
+    bus_file_id: null,
+    bus_caption: null,
 
-  // Медиа: расписание уроков, звонков, автобус
-  if (typeof rec.schedule_file_id === "undefined") rec.schedule_file_id = null;
-  if (typeof rec.schedule_caption === "undefined") rec.schedule_caption = null;
+    // три независимых набора "времён"
+    pickup_times: null, // уроки (основное)
+    aftercare_times: null, // продлёнка / ГПД
+    snack_times: null // полдник
+  };
 
-  if (typeof rec.bells_file_id === "undefined") rec.bells_file_id = null;
-  if (typeof rec.bells_caption === "undefined") rec.bells_caption = null;
-
-  if (typeof rec.bus_file_id === "undefined") rec.bus_file_id = null;
-  if (typeof rec.bus_caption === "undefined") rec.bus_caption = null;
-
-  // Три независимых набора «времён»
-  if (typeof rec.pickup_times === "undefined") rec.pickup_times = null; // уроки
-  if (typeof rec.aftercare_times === "undefined") rec.aftercare_times = null; // продлёнка
-  if (typeof rec.snack_times === "undefined") rec.snack_times = null; // полдник
+  // создаём запись класса, не затирая уже сохранённые поля
+  state.classes[cls] = Object.assign({}, defaults, state.classes[cls] || {});
 }
 
 /* ---------------- Утилиты ---------------- */
