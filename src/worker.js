@@ -101,24 +101,24 @@ function ensureClass(state, cls) {
 
   const rec = state.classes[cls];
 
-  // Привязки чатов (оставляем как есть, если уже задано)
-  rec.general_chat_id ??= null;
-  rec.parents_chat_id ??= null;
+  // Привязки чатов
+  if (typeof rec.general_chat_id === "undefined") rec.general_chat_id = null;
+  if (typeof rec.parents_chat_id === "undefined") rec.parents_chat_id = null;
 
-  // Медиа: расписание уроков, звонков, автобусов
-  rec.schedule_file_id ??= null;
-  rec.schedule_caption ??= null;
+  // Медиа: расписание уроков, звонков, автобус
+  if (typeof rec.schedule_file_id === "undefined") rec.schedule_file_id = null;
+  if (typeof rec.schedule_caption === "undefined") rec.schedule_caption = null;
 
-  rec.bells_file_id ??= null;
-  rec.bells_caption ??= null;
+  if (typeof rec.bells_file_id === "undefined") rec.bells_file_id = null;
+  if (typeof rec.bells_caption === "undefined") rec.bells_caption = null;
 
-  rec.bus_file_id ??= null;
-  rec.bus_caption ??= null;
+  if (typeof rec.bus_file_id === "undefined") rec.bus_file_id = null;
+  if (typeof rec.bus_caption === "undefined") rec.bus_caption = null;
 
-  // Три независимых набора "времён"
-  rec.pickup_times ??= null; // уроки (main)
-  rec.aftercare_times ??= null; // продлёнка / ГПД
-  rec.snack_times ??= null; // полдник
+  // Три независимых набора «времён»
+  if (typeof rec.pickup_times === "undefined") rec.pickup_times = null; // уроки
+  if (typeof rec.aftercare_times === "undefined") rec.aftercare_times = null; // продлёнка
+  if (typeof rec.snack_times === "undefined") rec.snack_times = null; // полдник
 }
 
 /* ---------------- Утилиты ---------------- */
