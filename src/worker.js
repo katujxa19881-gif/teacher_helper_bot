@@ -298,7 +298,7 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Звонки для ${cls} опубликованы ✅` });
     return true;
   }
-  if (/(автобус|bus|подвоз)/.test(n)) { // автобусы/подвоз
+  if (/\b(автобус|автобусов|подвоз|поселки|bus)\b/.test(n)){
     state.classes[cls].bus_file_id = file_id;
     state.classes[cls].bus_caption = caption;
     await saveState(env, state);
@@ -475,14 +475,21 @@ async function handleNaturalMessage(env, token, msg, state) {
   }
 
   // «расписание автобусов» / «подвоз»
-  if (/(расписани.*автобус|подвоз)\b/.test(t)) {
-    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-    const rec = state.classes[cls] || {};
-    if (rec.bus_file_id) {
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы ${cls}` });
-    }
-    return true;
+if (/(расписани[ея].*автобус|автобус[а-я]*|подвоз|поселки)/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.bus_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bus_file_id,
+      caption: rec.bus_caption || `Подвоз / автобусы — ${cls}`
+    });
+  } else {
+    await sendToSameThread("sendMessage", token, msg, {
+      text: `Для ${cls} пока нет актуального файла «автобусы/подвоз». Учитель может загрузить в ЛС с подписью «${cls} автобусы».`
+    });
   }
+  return true;
+}
 
   // «звонки»
   if (/(расписани.*звонк|когда перемена|во сколько звонок)/.test(t)) {
@@ -714,7 +721,20 @@ case "/media_list": {
   await sendToSameThread("sendMessage", token, msg, { text: `Медиа-темы (${cls}):\n${lines}` });
   return true;
 }
-
+case "/diag": {
+  const cls = parseClassFrom(args || "") || "1Б";
+  ensureClass(state, cls);
+  const rec = state.classes[cls];
+  const lines = [
+    `Диагностика для ${cls}:`,
+    `• расписание уроков: ${rec.schedule_file_id ? "есть ✅" : "нет"}`,
+    `• звонки: ${rec.bells_file_id ? "есть ✅" : "нет"}`,
+    `• автобусы/подвоз: ${rec.bus_file_id ? "есть ✅" : "нет"}`,
+    `• teach правил: ${(state.teach||[]).length}`
+  ].join("\n");
+  await sendToSameThread("sendMessage", token, msg, { text: lines });
+  return true;
+}
 case "/media_del": {
   const isT = state.teacher_id && state.teacher_id === msg.from.id;
   if (!isT) {
