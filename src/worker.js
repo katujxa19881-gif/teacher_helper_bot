@@ -108,13 +108,11 @@ if (!state.classes) state.classes = {};
     bells_file_id: null,
     bells_caption: null,
     bus_file_id: null,
-    bus_caption: null,
-    
+    bus_caption: null,    
 // три независимых набора "времён"
     pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка / ГПД
     snack_times: null // полдник
-
 // создаём запись класса, не затирая уже сохранённые поля
   state.classes[cls] = Object.assign({}, defaults, state.classes[cls] || {});
 
