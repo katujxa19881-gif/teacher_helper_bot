@@ -100,11 +100,9 @@ if (!state.classes) state.classes = {};
 
 // значения по умолчанию
   const defaults = {
-    // привязки чатов
+// привязки чатов
     general_chat_id: null,
-    parents_chat_id: null,
-
-    // медиа: расписание уроков, звонков, автобус
+// медиа: расписание уроков, звонков, автобус
     schedule_file_id: null,
     schedule_caption: null,
     bells_file_id: null,
@@ -112,11 +110,11 @@ if (!state.classes) state.classes = {};
     bus_file_id: null,
     bus_caption: null,
 
-    // три независимых набора "времён"
+// три независимых набора "времён"
     pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка / ГПД
     snack_times: null // полдник
-  };
+
 // создаём запись класса, не затирая уже сохранённые поля
   state.classes[cls] = Object.assign({}, defaults, state.classes[cls] || {});
 
