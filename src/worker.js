@@ -300,8 +300,7 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text: `Звонки для ${cls} опубликованы ✅` });
     return true;
 }
-  // ШКОЛЬНЫЙ ПОДВОЗ (организованный, в школу и из школы)
- if (/\b(подвоз|школьн(ый|ые|ого)|шк-?автобус|школ.*автобус)\b/.test(n)) {
+  if (/\b(подвоз|школьн(ый|ые|ого)|шк-?автобус|школ.*автобус)\b/.test(n)) {
   state.classes[cls].shuttle_file_id = file_id;
   state.classes[cls].shuttle_caption = caption;
   await saveState(env, state);
@@ -309,8 +308,6 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Подвоз (школьный) для ${cls} опубликован ✅` });
   return true;
 }
-
-// ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ АВТОБУСЫ
 if (/\b(автобус(ы)?|маршрут(ы)?|городск(ой|ие)|муниципал|bus|№\s*\d+)\b/.test(n)) {
   state.classes[cls].bus_file_id = file_id;
   state.classes[cls].bus_caption = caption;
@@ -479,13 +476,13 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-// ПОДВОЗ (школьные автобусы)
-if (/\b(подвоз|школьн(ый|ые)|шк-?автобус|школ.*автобус)\b/.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
-  } else if (rec.bus_file_id) {
+ // ПОДВОЗ (школьные автобусы)
+ if (/\b(подвоз|школьн(ый|ые)|шк-?автобус|школ.*автобус)\b/.test(t)) {
+   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+   const rec = state.classes[cls] || {};
+   if (rec.shuttle_file_id) {
+     await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
+   } else if (rec.bus_file_id) {
     // мягкий фолбэк, чтобы не молчать
     await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
   } else {
