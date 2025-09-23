@@ -357,12 +357,19 @@ async function cmdPickupSet(env, token, msg, state, args) {
     if (cand !== "main") scope = cand;
   }
 
-  // 3) «Хвост» (пары ПН=.. или JSON) — это всё после первого токена +,
-  // если есть ключевое слово (продлёнка/полдник), то и после второго.
+  // 3) «Хвост» - начинаем строго с первого ДЕНЬ=,
+ const firstDayIdx = args.search(/(?:^|[\s,;])(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС)\s*=/i);
+let rest;
+if (firstDayIdx >= 0) {
+  rest = args.slice(firstDayIdx).trim();
+} else {
+  // fallback на старую логику (для JSON-блока и пр.)
+  const parts = args.trim().split(/\s+/); // cls, [метка], ...
+  const hasLabel = parts[1] && /^(уроки|продл[её]нка|гпд|полдник)$/i.test(parts[1]);
   const restStart =
-    scope === "main" ? args.indexOf(parts[0]) + parts[0].length
-                     : args.indexOf(parts[1]) + parts[1].length;
-  const rest = args.slice(restStart).trim().replace(/^,/, "").trim();
+    args.indexOf(parts[0]) + parts[0].length + (hasLabel ? args.indexOf(parts[1]) - args.indexOf(parts[0]) - parts[0].length + parts[1].length : 0);
+  rest = args.slice(restStart).trim();
+}
 
   // 4) Разбор в mapping { ПН: "12:15", ВТ: "11:40", ... }
   let mapping = null;
