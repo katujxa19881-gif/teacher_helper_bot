@@ -97,10 +97,11 @@ async function saveState(env, state) { await env.KV_BOT.put("state", JSON.string
 
 ffunction ensureClass(state, cls) {
     if (!state.classes) state.classes = {};
-
-// значения по умолчанию
-const defaults = {
-// привязки чатов
+  
+  // значения по умолчанию
+  const defaults = {
+    
+    // привязки чатов
     general_chat_id: null,
 
 // медиа: расписание уроков, звонков, автобус
