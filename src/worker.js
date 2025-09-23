@@ -96,10 +96,17 @@ async function loadState(env) {
 async function saveState(env, state) { await env.KV_BOT.put("state", JSON.stringify(state)); }
 
 function ensureClass(state, cls) {
-  state.classes[cls] = state.classes[cls] || {};
-  const rec = state.classes[cls];
-  rec.general_chat_id ??= null;
-  rec.parents_chat_id ??= null;
+  if (!state.classes) state.classes = {};
+  if (!state.classes[cls]) state.classes[cls] = {};
+
+  // Гарантируем поля под все три «расписания-времени»
+  state.classes[cls] = {
+    ...state.classes[cls],
+    pickup_times: state.classes[cls]?.pickup_times || null, // уроки (main)
+    aftercare_times: state.classes[cls]?.aftercare_times || null, // продлёнка / ГПД
+    snack_times: state.classes[cls]?.snack_times || null, // полдник
+  };
+}
 
   // Фото-ресурсы
   rec.schedule_file_id ??= null; // расписание уроков
@@ -174,6 +181,27 @@ function pickClassFromChat(state, chatId) {
 function formatPickupWeek(mapping) {
   const order = ["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"];
   return order.map(d => `${d} — ${mapping?.[d] || "—"}`).join("\n");
+}
+// Определяем «сценарий» по тексту: уроки / продлёнка / полдник
+function detectScope(raw = "") {
+  const n = normalize(raw);
+  if (/\b(продл[её]нк|гпд)\b/.test(n)) return "aftercare"; // продлёнка / ГПД
+  if (/\b(полдник)\b/.test(n)) return "snack"; // полдник
+  return "main"; // по умолчанию — уроки
+}
+
+// Куда сохранять в state.classes[cls]
+function mappingFieldByScope(scope) {
+  if (scope === "aftercare") return "aftercare_times";
+  if (scope === "snack") return "snack_times";
+  return "pickup_times";
+}
+
+// Человекочитаемое имя для уведомления
+function prettyNameByScope(scope) {
+  if (scope === "aftercare") return "продлёнка";
+  if (scope === "snack") return "полдник";
+  return "уроки";
 }
 
 /* ---- Адресация к родителю ---- */
@@ -308,11 +336,87 @@ async function cmdLink(token, msg, state, args, kind) {
 
 async function cmdPickupSet(env, token, msg, state, args) {
   const isTeacher = state.teacher_id && state.teacher_id === msg.from.id;
-  if (!isTeacher) return sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+  if (!isTeacher)
+    return sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
 
-  const parts = args.trim().split(/\s+/);
+  // 1) Класс — всегда первый «токен»
+  const parts = (args || "").trim().split(/\s+/).filter(Boolean);
   const cls = parseClassFrom(parts[0] || "");
-  if (!cls) return sendToSameThread("sendMessage", token, msg, { text: "Формат: /pickup_set 1Б [уроки|продлёнка|полдник] ПН=13:30,ВТ=12:40,..." });
+  if (!cls)
+    return sendToSameThread("sendMessage", token, msg, {
+      text: 'Формат: /pickup_set 1Б [продлёнка|полдник] ПН=13:30,ВТ=12:40,... или JSON',
+    });
+
+  ensureClass(state, cls);
+
+  // 2) Второй токен — необязательный «тип» (продлёнка / полдник)
+  let scope = "main";
+  if (parts[1]) {
+    const cand = detectScope(parts[1]);
+    if (cand !== "main") scope = cand;
+  }
+
+  // 3) «Хвост» (пары ПН=.. или JSON) — это всё после первого токена +,
+  // если есть ключевое слово (продлёнка/полдник), то и после второго.
+  const restStart =
+    scope === "main" ? args.indexOf(parts[0]) + parts[0].length
+                     : args.indexOf(parts[1]) + parts[1].length;
+  const rest = args.slice(restStart).trim().replace(/^,/, "").trim();
+
+  // 4) Разбор в mapping { ПН: "12:15", ВТ: "11:40", ... }
+  let mapping = null;
+
+  if (rest.startsWith("{")) {
+    // JSON-формат
+    try {
+      const obj = JSON.parse(rest);
+      const m = {};
+      for (const [k, v] of Object.entries(obj || {})) {
+        const kk = dayShortFromInput(k) || k.toString().toUpperCase().slice(0, 2);
+        if (DAYS.includes(kk) && /^\d{1,2}:\d{2}$/.test(String(v))) m[kk] = String(v);
+      }
+      mapping = Object.keys(m).length ? m : null;
+    } catch {
+      mapping = null;
+    }
+  } else {
+    // Пары вида "ПН=12:15, ВТ=11:40, ..."
+    mapping = parsePickupMapping(rest);
+  }
+
+  if (!mapping)
+    return sendToSameThread("sendMessage", token, msg, {
+      text:
+        'Не удалось распознать времена.\nПримеры:\n' +
+        '/pickup_set 1Б ПН=12:15,ВТ=11:40\n' +
+        '/pickup_set 1Б продлёнка {"пн":"13:40","вт":"13:40"}',
+    });
+
+  // 5) Сохраняем в нужное поле по «сценарию»
+  const field = mappingFieldByScope(scope);
+  const pretty = prettyNameByScope(scope);
+
+  state.classes[cls][field] = mapping;
+  await saveState(env, state);
+
+  // 6) Подтверждение и авто-публикация в привязанные чаты
+  const pairs = Object.entries(mapping).map(([k, v]) => `${k}=${v}`).join(", ");
+  await sendToSameThread("sendMessage", token, msg, {
+    text: `Готово, ${pretty} для ${cls}: ${pairs}`,
+  });
+
+  const rec = state.classes[cls];
+  const label =
+    scope === "aftercare" ? "Обновлено время (продлёнка, " + cls + "):\n"
+    : scope === "snack" ? "Обновлено время (полдник, " + cls + "):\n"
+                           : "Обновлено время (уроки, " + cls + "):\n";
+  for (const chatId of [rec.general_chat_id, rec.parents_chat_id].filter(Boolean)) {
+    await sendSafe("sendMessage", token, {
+      chat_id: chatId,
+      text: label + formatPickupWeek(mapping),
+    });
+  }
+}
 
   ensureClass(state, cls);
 
