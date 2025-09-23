@@ -96,15 +96,16 @@ async function loadState(env) {
 async function saveState(env, state) { await env.KV_BOT.put("state", JSON.stringify(state)); }
 
 function ensureClass(state, cls) {
+  if (!state.classes) state.classes = {};
   if (!state.classes[cls]) state.classes[cls] = {};
   const rec = state.classes[cls];
 
   const defaults = {
-    // Привязки чатов
+    // чаты
     general_chat_id: null,
     parents_chat_id: null,
 
-    // Медиа: расписание уроков, звонков, автобус
+    // медиа
     schedule_file_id: null,
     schedule_caption: null,
     bells_file_id: null,
@@ -112,10 +113,10 @@ function ensureClass(state, cls) {
     bus_file_id: null,
     bus_caption: null,
 
-    // Три независимых набора "времён"
-    pickup_times: null, // забор после уроков
+    // времена
+    pickup_times: null, // уроки (основное)
     aftercare_times: null, // продлёнка
-    snack_times: null, // полдник
+    snack_times: null // полдник
   };
 
   for (const [k, v] of Object.entries(defaults)) {
