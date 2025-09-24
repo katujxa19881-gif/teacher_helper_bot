@@ -777,7 +777,7 @@ export default {
       const res = await tg("setWebhook", token, {
         url: `${env.PUBLIC_URL}/webhook/${token}`,
         allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member",
-        max_connections: 40,
+max_connections: 40,
         drop_pending_updates: false
       });
       return new Response(JSON.stringify(res), {
@@ -832,4 +832,3 @@ export default {
     return NO();
   }
 };
-
