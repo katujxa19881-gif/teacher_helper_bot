@@ -450,7 +450,22 @@ async function handleNaturalMessage(env, token, msg, state) {
     if (state.teacher_id) await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Отпустить] ${msg.chat.title || msg.chat.id}:\n${raw}` });
     return true;
   }
+// «когда/во сколько/до скольки заканчивается продлёнка/полдник»
+  if (/(когда|во сколько|до скольки|к скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
+    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
+    return true;
+  }
 
+  // Короткие «продлёнка» / «полдник» (сегодня/завтра — по умолчанию)
+  if (/\b(продл[её]нка|гпд|полдник)\b/i.test(t)) {
+    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
+    return true;
+  }
+  
   // «когда заканчивается 2 урок» — фото с расписанием звонков
   if (/(когда|во сколько|до скольки).*(заканч|конча).*(урок|пара)/.test(t)) {
     const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
@@ -464,22 +479,6 @@ async function handleNaturalMessage(env, token, msg, state) {
         await rememberContext(env, msg, "bot", r.text);
       }
     }
-    return true;
-  }
-
-  // «когда/во сколько/до скольки заканчивается продлёнка/полдник»
-  if (/(когда|во сколько|до скольки|к скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
-    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
-    await sendToSameThread("sendMessage", token, msg, { text: r.text });
-    await rememberContext(env, msg, "bot", r.text);
-    return true;
-  }
-
-  // Короткие просьбы «продлёнка» / «полдник» (сегодня/завтра) — тоже отвечаем временем
-  if (/\b(продл[её]нка|гпд)\b/.test(t) || /\bполдник\b/.test(t)) {
-    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
-    await sendToSameThread("sendMessage", token, msg, { text: r.text });
-    await rememberContext(env, msg, "bot", r.text);
     return true;
   }
 
