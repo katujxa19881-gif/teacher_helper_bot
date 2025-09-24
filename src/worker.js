@@ -776,8 +776,8 @@ export default {
       if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
       const res = await tg("setWebhook", token, {
         url: `${env.PUBLIC_URL}/webhook/${token}`,
-        allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member",
-max_connections: 40,
+        allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member","chat_member"],
+        max_connections: 40,
         drop_pending_updates: false
       });
       return new Response(JSON.stringify(res), {
