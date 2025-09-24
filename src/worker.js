@@ -664,136 +664,97 @@ async function handleCommand(env, token, msg, state) {
     }
 
     case "/teach_del": {
+      const isT = state.teacher_id && state.teacher_id===msg.from.id;
+      if(!isT){ await sendToSameThread("sendMessage", token, msg, { text:"Доступ только учителю." }); return true; }
+      const idx=parseInt(args,10); const list=state.teach||[];
+      if(isNaN(idx)||idx<1||idx>list.length){ await sendToSameThread("sendMessage", token, msg, { text:"Укажите номер правила: /teach_del 2" }); return true; }
+      list.splice(idx-1,1); state.teach=list; await saveState(env,state);
+      await sendToSameThread("sendMessage", token, msg, { text:"Удалено ✅" }); return true;
+    }
+    case "/teach_clear": {
+      const isT = state.teacher_id && state.teacher_id===msg.from.id;
+      if(!isT){ await sendToSameThread("sendMessage", token, msg, { text:"Доступ только учителю." }); return true; }
+      state.teach=[]; await saveState(env,state); await sendToSameThread("sendMessage", token, msg, { text:"Все правила очищены ✅" }); return true;
+    }
+
+    case "/persona_set": {
       const isT = state.teacher_id && state.teacher_id === msg.from.id;
-      if (!isT) { await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." }); return true; }
-      const idx = parseInt(args, 10);
-      const list = state.teach || [];
-      if (isNaN(idx) || idx < 1 || idx > list.length) { await sendToSameThread("sendMessage", token, msg, { text: "Укажите номер правила: /teach_del 2"
+      if (!isT) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+        return true;
+      }
+      const name = args.trim();
+      if (!name) {
+        await sendToSameThread("sendMessage", token, msg, { text: "/persona_set Ирина Владимировна" });
+        return true;
+      }
+      state.teacher_display_name = name;
+      await saveState(env, state);
+      await sendToSameThread("sendMessage", token, msg, { text: `Теперь отвечаю как: ${name}` });
       return true;
     }
-    list.splice(idx - 1, 1);
-    state.teach = list;
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, { text: "Удалено ✅" });
-    return true;
-  }
+case "/forward_unknown": {
+      const isT = state.teacher_id && state.teacher_id === msg.from.id;
+      if (!isT) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+        return true;
+      }
+      const v = (args || "").trim().toLowerCase();
+      if (!["on", "off"].includes(v)) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Используйте: /forward_unknown on|off" });
+        return true;
+      }
+      state.forward_unknown_to_teacher = (v === "on");
+      await saveState(env, state);
+      await sendToSameThread("sendMessage", token, msg, { text: `Пересылать неизвестные вопросы учителю: ${state.forward_unknown_to_teacher ? "ДА" : "НЕТ"}` });
+      return true;
+    }
 
-  case "/teach_clear": {
-    const isT = state.teacher_id && state.teacher_id === msg.from.id;
-    if (!isT) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+    // медиатеки
+    case "/media_list": {
+      const cls = parseClassFrom(args || "");
+      const map = listMedia(state, cls);
+      const lines = Object.keys(map).length ? Object.entries(map).map(([k, c]) => `∙ ${k}: ${c}`).join("\n") : "тем нет";
+      await sendToSameThread("sendMessage", token, msg, { text: `Медиа-темы (${cls}):\n${lines}` });
       return true;
     }
-    state.teach = [];
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, { text: "Все правила очищены ✅" });
-    return true;
-  }
+    case "/media_del": {
+      const isT = state.teacher_id && state.teacher_id === msg.from.id;
+      if (!isT) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+        return true;
+      }
+      const m = args.split(/\s+/);
+      const topic = (m[0] || "").trim();
+      const which = (m[1] || "").trim();
+      const cls = parseClassFrom(m.slice(2).join(" ") || "");
+      if (!topic || !which) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Формат: /media_del <тема> <№|all> [КЛАСС]" });
+        return true;
+      }
+      const ok = delMedia(state, cls, topic, which.toLowerCase());
+      await saveState(env, state);
+      await sendToSameThread("sendMessage", token, msg, { text: ok ? "Удалено ✅" : "Ничего не найдено." });
+      return true;
+    }
+    case "/media_clear": {
+      const isT = state.teacher_id && state.teacher_id === msg.from.id;
+      if (!isT) {
+        await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
+        return true;
+      }
+      const cls = parseClassFrom(args || "");
+      clearMedia(state, cls);
+      await saveState(env, state);
+      await sendToSameThread("sendMessage", token, msg, { text: `Пользовательские медиа-коллекции очищены (${cls}) ✅` });
+      return true;
+    }
 
-  case "/persona_set": {
-    const isT = state.teacher_id && state.teacher_id === msg.from.id;
-    if (!isT) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
-      return true;
-    }
-    const name = args.trim();
-    if (!name) {
-      await sendToSameThread("sendMessage", token, msg, { text: "/persona_set Ирина Владимировна" });
-      return true;
-    }
-    state.teacher_display_name = name;
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, { text: `Теперь отвечаю как: ${name}` });
-    return true;
+    default: return false;
   }
-
-  case "/forward_unknown": {
-    const isT = state.teacher_id && state.teacher_id === msg.from.id;
-    if (!isT) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
-      return true;
-    }
-    const v = (args || "").trim().toLowerCase();
-    if (!["on", "off"].includes(v)) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Используйте: /forward_unknown on|off" });
-      return true;
-    }
-    state.forward_unknown_to_teacher = (v === "on");
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, {
-      text: `Пересылать неизвестные вопросы учителю: ${state.forward_unknown_to_teacher ? "ДА" : "НЕТ"}`
-    });
-    return true;
-  }
-
-  case "/media_list": {
-    const cls = parseClassFrom(args || "");
-    const map = listMedia(state, cls);
-    const lines = Object.keys(map).length
-      ? Object.entries(map).map(([k, c]) => `∙ ${k}: ${c}`).join("\n")
-      : "тем нет";
-    await sendToSameThread("sendMessage", token, msg, { text: `Медиа-темы (${cls}):\n${lines}` });
-    return true;
-  }
-
-  case "/diag": {
-    const cls = parseClassFrom(args || "") || "1Б";
-    ensureClass(state, cls);
-    const rec = state.classes[cls];
-    const lines = [
-      `Диагностика для ${cls}:`,
-      `• расписание уроков: ${rec.schedule_file_id ? "есть ✅" : "нет"}`,
-      `• звонки: ${rec.bells_file_id ? "есть ✅" : "нет"}`,
-      `• автобусы (городские): ${rec.bus_file_id ? "есть ✅" : "нет"}`,
-      `• подвоз (школьный): ${rec.shuttle_file_id ? "есть ✅" : "нет"}`,
-      `• время уроки: ${rec.pickup_times ? "задано" : "—"}`,
-      `• время продлёнка: ${rec.aftercare_times ? "задано" : "—"}`,
-      `• время полдник: ${rec.snack_times ? "задано" : "—"}`,
-      `• teach правил: ${(state.teach || []).length}`
-    ].join("\n");
-    await sendToSameThread("sendMessage", token, msg, { text: lines });
-    return true;
-  }
-
-  case "/media_del": {
-    const isT = state.teacher_id && state.teacher_id === msg.from.id;
-    if (!isT) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
-      return true;
-    }
-    const m = args.split(/\s+/);
-    const topic = (m[0] || "").trim();
-    const which = (m[1] || "").trim();
-    const cls = parseClassFrom(m.slice(2).join(" ") || "");
-    if (!topic || !which) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Формат: /media_del <тема> <№|all> [КЛАСС]" });
-      return true;
-    }
-    const ok = delMedia(state, cls, topic, which.toLowerCase());
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, { text: ok ? "Удалено ✅" : "Ничего не найдено." });
-    return true;
-  }
-
-  case "/media_clear": {
-    const isT = state.teacher_id && state.teacher_id === msg.from.id;
-    if (!isT) {
-      await sendToSameThread("sendMessage", token, msg, { text: "Доступ только учителю." });
-      return true;
-    }
-    const cls = parseClassFrom(args || "");
-    clearMedia(state, cls);
-    await saveState(env, state);
-    await sendToSameThread("sendMessage", token, msg, { text: `Пользовательские медиа-коллекции очищены (${cls}) ✅` });
-    return true;
-  }
-
-  default:
-    return false;
-}
 }
 
-/* ------------- entry --------------- */
+/* ---------- entry ---------- */
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -824,7 +785,8 @@ export default {
         if (handled) return OK();
         const human = await handleNaturalMessage(env, token, update.message, state);
         if (human) return OK();
-        return OK(); // молчим
+        // молчим
+        return OK();
       }
 
       // Медиа от учителя (ЛС)
