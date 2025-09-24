@@ -136,14 +136,15 @@ function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)
 function extractTimeFlexible(text){ const m=text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
 function isBusQuery(t){
   // городские/муниципальные автобусы
-  return /(^|[^a-z0-9а-яё])(расписани[ея].*автобус|автобус|маршрут|городск|муниципал|bus)([^a-z0-9а-яё]|$)/.test(t);
+function isBusQuery(t){
+  // работаем по normalize(t), без \b и самодельных «границ»
+  return /(расписани[ея].*автобус|автобус|маршрут|городск|муниципал|bus)/.test(t);
 }
+
+// школьный «подвоз»
 function isShuttleQuery(t){
-  // школьный подвоз
-  return /(^|[^a-z0-9а-яё])(подвоз|школьн|шк-?автобус|школ.*автобус)([^a-z0-9а-яё]|$)/.test(t);
+  return /(подвоз|школьн|шк-?автобус|школ.*автобус)/.test(t);
 }
-// не используем \b перед «на» — кириллица
-function extractDelayMinutes(text){ const m=normalize(text).match(/(?:^|\s)на\s+(\d{1,2})\s*мин/); return m?parseInt(m[1],10):null; }
 
 // область времени из текста (без \b на кириллице)
 function scopeFromText(t){
@@ -243,25 +244,25 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     return true;
   }
 
-  // ПОДВОЗ (школьные)
-  if ((/(подвоз)/.test(n)) || (/школьн(ый|ые|ого|ых)\s*автобус(ы|ов)?/.test(n)) || (/шк-?автобус(ы)?/.test(n)) || (/школ.*автобус(ы|ов)?/.test(n))){
-    state.classes[cls].shuttle_file_id = file_id;
-    state.classes[cls].shuttle_caption = caption;
-    await saveState(env, state);
-    await publishSingleFileToClassChats(token, state, cls, file_id, caption);
-    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Подвоз (школьные автобусы) для ${cls} опубликован ✅` });
-    return true;
-  }
+  // ПОДВОЗ (школьные автобусы)
+if (/(подвоз|школьн|шк-?автобус|школ.*автобус)/.test(n)) {
+  state.classes[cls].shuttle_file_id = file_id;
+  state.classes[cls].shuttle_caption = caption;
+  await saveState(env, state);
+  await publishSingleFileToClassChats(token, state, cls, file_id, caption);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Подвоз (школьные автобусы) для ${cls} опубликован ✅` });
+  return true;
+}
 
-  // ГОРОДСКИЕ АВТОБУСЫ
-  if (/автобус(ы|ов)?/.test(n) || /расписани[ея].*автобус/.test(n) || /график.*автобус/.test(n) || /маршрут(ы)?/.test(n) || /городск(ой|ие)/.test(n) || /муниципал/.test(n) || /bus/.test(n) || /№\s*\d+/.test(n) || /авт\./.test(n)){
-    state.classes[cls].bus_file_id = file_id;
-    state.classes[cls].bus_caption = caption;
-    await saveState(env, state);
-    await publishSingleFileToClassChats(token, state, cls, file_id, caption);
-    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Автобусы (городские) для ${cls} опубликованы ✅` });
-    return true;
-  }
+// ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ
+if (/(автобус|маршрут|городск|муниципал|bus)/.test(n)) {
+  state.classes[cls].bus_file_id = file_id;
+  state.classes[cls].bus_caption = caption;
+  await saveState(env, state);
+  await publishSingleFileToClassChats(token, state, cls, file_id, caption);
+  await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Автобусы (городские) для ${cls} опубликованы ✅` });
+  return true;
+}
 
   // Обычное расписание уроков
   state.classes[cls].schedule_file_id = file_id;
