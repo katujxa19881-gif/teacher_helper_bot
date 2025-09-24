@@ -132,56 +132,46 @@ function findTeachAnswer(state, question){
 }
 
 /* --------- Natural helpers ------------ */
-function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
-function extractTimeFlexible(text){ const m=text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
-function isBusQuery(t){
-  // городские/муниципальные автобусы
-function isBusQuery(t){
-  // работаем по normalize(t), без \b и самодельных «границ»
+// точное время HH:MM и гибкое HH.MM / HH MM
+function extractTimeHHMM(text) {
+  const m = text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+}
+function extractTimeFlexible(text) {
+  const m = text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+}
+
+// на сколько минут опоздаем: «на 10 мин»
+function extractDelayMinutes(text) {
+  const m = normalize(text).match(/\bна\s+(\d{1,2})\s*мин/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Городские/муниципальные автобусы
+function isBusQuery(t) {
+  // работаeм по normalize(t), без \b и самодельных «границ»
   return /(расписани[ея].*автобус|автобус|маршрут|городск|муниципал|bus)/.test(t);
 }
 
-// школьный «подвоз»
-function isShuttleQuery(t){
+// Школьный «подвоз»
+function isShuttleQuery(t) {
   return /(подвоз|школьн|шк-?автобус|школ.*автобус)/.test(t);
 }
 
-// область времени из текста (без \b на кириллице)
-function scopeFromText(t){
+// из текста понимаем, о чём спрашивают: уроки / продлёнка / полдник
+function scopeFromText(t) {
   if (/(продленк|продлёнк|гпд)/.test(t)) return "aftercare";
   if (/(полдник|полденик)/.test(t)) return "snack";
   return "main";
 }
-function fieldByScope(scope){
-  if (scope==="aftercare") return "aftercare_times";
-  if (scope==="snack") return "snack_times";
+function fieldByScope(scope) {
+  if (scope === "aftercare") return "aftercare_times";
+  if (scope === "snack") return "snack_times";
   return "pickup_times";
 }
-function labelByScope(scope){
-  return scope==="aftercare" ? "продлёнка" : scope==="snack" ? "полдник" : "уроки";
-}
-
-function resolveTimeNatural(state, msg, freeText, teacherName){
-  const cls = parseClassFrom(freeText||"");
-  ensureClass(state, cls);
-  const t = normalize(freeText||"");
-  const scope = scopeFromText(t);
-  const field = fieldByScope(scope);
-  const rec = state.classes[cls];
-  const mapping = rec[field];
-
-  if (!mapping){
-    return { ok:false, text:`Для ${cls} ещё не задано время (${labelByScope(scope)}). Учителю: /pickup_set ${cls} ${labelByScope(scope)} ПН=13:30,ВТ=12:40,...` };
-  }
-  let d = dayShortFromInput(freeText||"");
-  if (!d){
-    if (/завтра/.test(t)){ const now=new Date(); now.setUTCMinutes(now.getUTCMinutes()+24*60); d = ruShortFromDate(now); }
-    else d = todayRuShort();
-  }
-  const tm = mapping[d];
-  if (!tm) return { ok:false, text:`${cls}: на ${dayNameFull(d)} время не задано (${labelByScope(scope)}).` };
-  const pref = addressPrefix(msg);
-  return { ok:true, text:`${pref}${teacherName}: ${cls}, ${labelByScope(scope)}, ${dayNameFull(d)} — забираем в ${tm}.` };
+function labelByScope(scope) {
+  return scope === "aftercare" ? "продлёнка" : scope === "snack" ? "полдник" : "уроки";
 }
 
 /* ------------- MEDIA LIB -------------- */
