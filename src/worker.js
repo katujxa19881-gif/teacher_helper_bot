@@ -135,10 +135,12 @@ function findTeachAnswer(state, question){
 function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
 function extractTimeFlexible(text){ const m=text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
 function isBusQuery(t){
-  return /\b(автобус|автобусы|расписани[ея].*автобус|маршрут(ы)?|городск(ой|ие)|муниципал|bus)\b/.test(t);
+  // городские/муниципальные автобусы
+  return /(^|[^a-z0-9а-яё])(расписани[ея].*автобус|автобус|маршрут|городск|муниципал|bus)([^a-z0-9а-яё]|$)/.test(t);
 }
 function isShuttleQuery(t){
-  return /\b(подвоз|школьн(ый|ые)|шк-?автобус|школ.*автобус)\b/.test(t);
+  // школьный подвоз
+  return /(^|[^a-z0-9а-яё])(подвоз|школьн|шк-?автобус|школ.*автобус)([^a-z0-9а-яё]|$)/.test(t);
 }
 // не используем \b перед «на» — кириллица
 function extractDelayMinutes(text){ const m=normalize(text).match(/(?:^|\s)на\s+(\d{1,2})\s*мин/); return m?parseInt(m[1],10):null; }
@@ -231,7 +233,7 @@ async function publishSingleFileToClassChats(token, state, cls, file_id, caption
 async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, file_id){
   const n = normalize(caption);
 
-  // звонки
+    // звонки
   if (/звонк/.test(n)){
     state.classes[cls].bells_file_id = file_id;
     state.classes[cls].bells_caption = caption;
@@ -337,7 +339,7 @@ if (isShuttleQuery(t) || isBusQuery(t)) {
       });
     }
     return true;
-  } else { // isBusQuery(t)
+  } else {
     if (rec.bus_file_id) {
       await sendToSameThread("sendPhoto", token, msg, {
         photo: rec.bus_file_id,
@@ -356,7 +358,6 @@ if (isShuttleQuery(t) || isBusQuery(t)) {
     return true;
   }
 }
-// --- /конец приоритетного блока ---
 
   // teach-правила
   const taught = findTeachAnswer(state, raw);
