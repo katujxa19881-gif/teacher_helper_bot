@@ -180,6 +180,7 @@ function scopeFromText(t) {
   if (/полдн(ик|ек)/.test(t)) return "snack"; // полдник / полденек (частые опечатки)
   return "main";
 }
+
 function mappingFieldByScope(scope) {
   if (scope === "aftercare") return "aftercare_times";
   if (scope === "snack") return "snack_times";
@@ -451,7 +452,8 @@ async function handleNaturalMessage(env, token, msg, state) {
     if (state.teacher_id) await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Отпустить] ${msg.chat.title || msg.chat.id}:\n${raw}` });
     return true;
   }
-// «когда/во сколько/до скольки заканчивается продлёнка/полдник»
+  
+  // «когда/во сколько/до скольки заканчивается продлёнка/полдник»
   if (/(когда|во сколько|до скольки|к скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
     const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
     await sendToSameThread("sendMessage", token, msg, { text: r.text });
