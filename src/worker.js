@@ -175,8 +175,8 @@ function extractDelayMinutes(text) { const m = normalize(text).match(/\bна\s+(
 
 // определяем какой набор "времен" нужен по тексту
 function scopeFromText(t) {
-  if (/(продленк|продлёнк|гпд)\b/.test(t)) return "aftercare";
-  if (/(полдник|полденик)\b/.test(t)) return "snack";
+  if (/(продл[её]нк|гпд)\b/.test(t)) return "aftercare";
+  if (/\bполдн(ик|ек)\b/.test(t)) return "snack";
   return "main";
 }
 function mappingFieldByScope(scope) {
@@ -467,13 +467,19 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «во сколько/когда забирать …» (уроки / продлёнка / полдник)
-  if (/(во сколько|когда).*(забир|забрать|забирать)/.test(t)) {
+  // «когда/во сколько/до скольки заканчивается продлёнка/полдник»
+  if (/(когда|во сколько|до скольки|к скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
     const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
-    if (r.ok) {
-      await sendToSameThread("sendMessage", token, msg, { text: r.text });
-      await rememberContext(env, msg, "bot", r.text);
-    }
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
+    return true;
+  }
+
+  // Короткие просьбы «продлёнка» / «полдник» (сегодня/завтра) — тоже отвечаем временем
+  if (/\b(продл[её]нка|гпд)\b/.test(t) || /\bполдник\b/.test(t)) {
+    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
     return true;
   }
 
@@ -638,27 +644,35 @@ async function handleCommand(env, token, msg, state) {
         return true;
       }
 
-      const field = scope === "aftercare" ? "aftercare_times" : scope === "snack" ? "snack_times" : "pickup_times";
+      // куда сохранять: уроки / продлёнка / полдник
+      const field = scope === "aftercare" ? "aftercare_times"
+                   : scope === "snack" ? "snack_times"
+                   : "pickup_times";
+
       state.classes[cls][field] = mapping;
       await saveState(env, state);
 
-      const label = scope === "aftercare" ? "продлёнка" : scope === "snack" ? "полдник" : "уроки";
+      // подпись для оповещения
+      const scopeLabel = scope === "aftercare" ? "продлёнка"
+                        : scope === "snack" ? "полдник"
+                        : "уроки";
 
       await sendToSameThread("sendMessage", token, msg, {
-        text: `Готово, ${label} для ${cls}: ${Object.entries(mapping).map(([k,v])=>`${k}=${v}`).join(", ")}`
+        text: `Готово. ${scopeLabel} для ${cls}: ${Object.entries(mapping).map(([k,v])=>`${k}=${v}`).join(", ")}`
       });
 
-      // пост в связанные чаты
-      const rec = state.classes[cls];
-      const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
-      const table = formatWeekTable(mapping);
-      for (const chatId of targets) {
-        await sendSafe("sendMessage", token, {
-          chat_id: chatId,
-          text: `Обновлено время (${label}, ${cls}):\n${table}`
-        });
+      // публикуем таблицу в привязанные чаты
+      {
+        const rec = state.classes[cls];
+        const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
+        const table = formatWeekTable(mapping);
+        for (const chatId of targets) {
+          await sendSafe("sendMessage", token, {
+            chat_id: chatId,
+            text: `Обновлено время (${scopeLabel}, ${cls}):\n${table}`
+          });
+        }
       }
-
       return true;
     }
 
