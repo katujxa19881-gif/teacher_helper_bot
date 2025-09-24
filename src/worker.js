@@ -243,7 +243,7 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     return true;
   }
 
-  // ПОДВОЗ (без \b на кириллице)
+  // ПОДВОЗ (школьные)
   if ((/(подвоз)/.test(n)) || (/школьн(ый|ые|ого|ых)\s*автобус(ы|ов)?/.test(n)) || (/шк-?автобус(ы)?/.test(n)) || (/школ.*автобус(ы|ов)?/.test(n))){
     state.classes[cls].shuttle_file_id = file_id;
     state.classes[cls].shuttle_caption = caption;
