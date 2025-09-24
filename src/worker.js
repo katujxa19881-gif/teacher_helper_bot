@@ -82,9 +82,9 @@ function ensureClass(state, cls) {
       shuttle_file_id: null, shuttle_caption: null, // подвоз (школьные автобусы)
 
       // три независимых набора времен (уроки/продленка/полдник)
-      pickup_times: null, // основное «во сколько забирать»
-      aftercare_times: null, // продлёнка / ГПД
-      snack_times: null, // полдник
+      pickup_times: null,     // основное «во сколько забирать»
+      aftercare_times: null,  // продлёнка / ГПД
+      snack_times: null,      // полдник
 
       // тематические медиатеки (карта/баланс и т.д.)
       media: {} // { topic: [ {type, file_id, caption} ] }
@@ -173,20 +173,17 @@ function extractTimeHHMM(text) { const m = text.match(/(\b[01]?\d|2[0-3]):([0-5]
 function extractTimeFlexible(text) { const m = text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null; }
 function extractDelayMinutes(text) { const m = normalize(text).match(/\bна\s+(\d{1,2})\s*мин/); return m ? parseInt(m[1], 10) : null; }
 
-// определяем какой набор "времен" нужен по тексту
+// какой набор "времён" нужен по тексту
 function scopeFromText(t) {
-  // t сюда уже приходит НОРМАЛИЗОВАННЫЙ (normalize)
-  if (/(продл[её]н|гпд)/.test(t)) return "aftercare"; // продленка / продлёнка / гпд
-  if (/полдн(ик|ек)/.test(t)) return "snack"; // полдник / полденек (частые опечатки)
-  return "main";
+  if (/(продл[её]н|гпд)/.test(t)) return "aftercare"; // продлёнка/ГПД
+  if (/полдн(ик|ек)/.test(t)) return "snack";        // полдник (включая частые опечатки)
+  return "main";                                      // уроки
 }
-
 function mappingFieldByScope(scope) {
   if (scope === "aftercare") return "aftercare_times";
   if (scope === "snack") return "snack_times";
   return "pickup_times";
 }
-
 function resolveTimeNatural(state, msg, freeText, teacherName) {
   let cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(freeText || "");
   ensureClass(state, cls);
@@ -237,7 +234,6 @@ function clearMedia(state, cls) {
   ensureClass(state, cls);
   state.classes[cls].media = {};
 }
-
 async function sendMediaItems(token, msg, items) {
   for (const it of items) {
     const cap = it.caption?.slice(0, 1024);
@@ -295,14 +291,14 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
   const raw = caption || "";
   const n = normalize(raw);
 
-  // Жёсткий принудительный тег в квадратных скобках: [подвоз] / [автобусы] / [звонки] / [уроки]
-  const forced = (raw.match(/\[(подвоз|автобус|автобусы|звонк[и]?|урок[и]?|расписани[ея])\]/i)||[])[1]?.toLowerCase();
+  // Принудительный тег в подписи: [подвоз] / [автобусы] / [звонки] / [уроки]
+  const forced = (raw.match(/(подвоз|автобус|автобусы|звонк[и]?|урок[и]?|расписани[ея])/i)||[])[1]?.toLowerCase();
 
-  const isBells = /звонк/.test(n) || forced?.startsWith("звонк");
+  const isBells   = /звонк/.test(n) || forced?.startsWith("звонк");
   const isShuttle = /подвоз/.test(n) || forced==="подвоз" || /школьн/.test(n) || /школ.*автобус/.test(n);
-  // важно: "автобусы" трактуем как городские, НО не если есть "подвоз"
-  const isBuses = (!isShuttle) && (/(автобус|маршрут|городск|муниципал|bus|№\s*\d+)/.test(n) ||
-                                       forced==="автобус" || forced==="автобусы");
+  // «автобусы» = городские, но не если это «подвоз»
+  const isBuses   = (!isShuttle) && (/(автобус|маршрут|городск|муниципал|bus|№\s*\d+)/.test(n)
+                      || forced==="автобус" || forced==="автобусы");
   const isSchedule= /расписан|урок/.test(n) || forced==="урок" || forced==="уроки" || forced==="расписание";
 
   if (isBells){
@@ -461,7 +457,7 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // Короткие «продлёнка» / «полдник» (сегодня/завтра — по умолчанию)
+  // Короткие «продлёнка» / «полдник»
   if (/\b(продл[её]нка|гпд|полдник)\b/i.test(t)) {
     const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
     await sendToSameThread("sendMessage", token, msg, { text: r.text });
@@ -485,7 +481,7 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // Карта — выдать комплект
+  // Карта — комплект
   if (/(как.*пополн|пополнить.*карт|пополнение карты)/.test(t)) {
     const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
     const items = (state.classes[cls]?.media?.topup || []).slice(0, 20);
@@ -514,32 +510,32 @@ async function handleNaturalMessage(env, token, msg, state) {
   }
 
   // ПОДВОЗ (школьные автобусы)
-if (/(^|[^\p{L}])подвоз([^\p{L}]|$)|школьн(ый|ые)|шк ?автобус|школ.*автобус/u.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
-  } else if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
-  } else {
-    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} [подвоз]».` });
+  if (/(^|[^\p{L}])подвоз([^\p{L}]|$)|школьн(ый|ые)|шк ?автобус|школ.*автобус/u.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+    const rec = state.classes[cls] || {};
+    if (rec.shuttle_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
+    } else if (rec.bus_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
+    } else {
+      await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} [подвоз]».` });
+    }
+    return true;
   }
-  return true;
-}
 
-// АВТОБУСЫ (городские/муниципальные), но не «подвоз»
-if (!/подвоз/.test(t) && /(автобус|расписани[ея].*автобус|маршрут|городск|муниципал|bus|№\s*\d+)/.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы — ${cls}` });
-  } else if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)" });
-  } else {
-    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} [автобусы]».` });
+  // АВТОБУСЫ (городские/муниципальные), но не «подвоз»
+  if (!/подвоз/.test(t) && /(автобус|расписани[ея].*автобус|маршрут|городск|муниципал|bus|№\s*\d+)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+    const rec = state.classes[cls] || {};
+    if (rec.bus_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы — ${cls}` });
+    } else if (rec.shuttle_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)" });
+    } else {
+      await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} [автобусы]».` });
+    }
+    return true;
   }
-  return true;
-}
 
   // Звонки
   if (/(расписани.*звонк|когда перемена|во сколько звонок)/.test(t)) {
@@ -551,7 +547,7 @@ if (!/подвоз/.test(t) && /(автобус|расписани[ея].*авт
     return true;
   }
 
-   // Не знаем — молчим. При включенной пересылке — перекидываем учителю.
+  // Не знаем — молчим (или пересылка учителю)
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Вопрос] ${msg.chat.title || msg.chat.id}:\n${raw}` });
   }
@@ -626,7 +622,7 @@ async function handleCommand(env, token, msg, state) {
         return true;
       }
 
-      // куда сохранять: уроки / продлёнка / полдник
+      // куда сохранять
       const field = scope === "aftercare" ? "aftercare_times"
                    : scope === "snack" ? "snack_times"
                    : "pickup_times";
@@ -634,7 +630,6 @@ async function handleCommand(env, token, msg, state) {
       state.classes[cls][field] = mapping;
       await saveState(env, state);
 
-      // подпись для оповещения
       const scopeLabel = scope === "aftercare" ? "продлёнка"
                         : scope === "snack" ? "полдник"
                         : "уроки";
@@ -643,14 +638,15 @@ async function handleCommand(env, token, msg, state) {
         text: `Готово. ${scopeLabel} для ${cls}: ${Object.entries(mapping).map(([k,v])=>`${k}=${v}`).join(", ")}`
       });
 
-      // публикуем таблицу в привязанные чаты
+      // оповещение в привязанные чаты
       {
-              const rec = state.classes[cls];
-      for (const chatId of [rec.general_chat_id, rec.parents_chat_id].filter(Boolean)) {
-        await sendSafe("sendMessage", token, {
-          chat_id: chatId,
-          text: `Обновлено время (${scopeLabel}, ${cls}):\n${formatWeekTable(mapping)}`
-        });
+        const rec = state.classes[cls];
+        for (const chatId of [rec.general_chat_id, rec.parents_chat_id].filter(Boolean)) {
+          await sendSafe("sendMessage", token, {
+            chat_id: chatId,
+            text: `Обновлено время (${scopeLabel}, ${cls}):\n${formatWeekTable(mapping)}`
+          });
+        }
       }
       return true;
     }
@@ -780,36 +776,60 @@ export default {
       if (!token || !env.PUBLIC_URL) return NO(400, "Need BOT_TOKEN and PUBLIC_URL");
       const res = await tg("setWebhook", token, {
         url: `${env.PUBLIC_URL}/webhook/${token}`,
-        allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member", "chat_member"],
-        max_connections: 40,
+        allowed_updates: ["message", "edited_message", "callback_query", "channel_post", "my_chat_member",
+                          max_connections: 40,
         drop_pending_updates: false
       });
-      return new Response(JSON.stringify(res), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(res), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
     }
 
+    // webhook handler
     if (url.pathname === `/webhook/${token}` && request.method === "POST") {
       let update;
-      try { update = await request.json(); } catch { return NO(400, "bad json"); }
+      try {
+        update = await request.json();
+      } catch {
+        return NO(400, "bad json");
+      }
+
       const state = await loadState(env);
 
-      // Текстовые команды / натуральные фразы
+      // текстовые команды и «натуральные» сообщения
       if (update.message?.text) {
         const handled = await handleCommand(env, token, update.message, state);
         if (handled) return OK();
+
         const human = await handleNaturalMessage(env, token, update.message, state);
         if (human) return OK();
-        return OK(); // молчим
+
+        // если ничего не распознали — молчим
+        return OK();
       }
 
-      // Медиа от учителя (ЛС)
-      if (update.message && (update.message.photo?.length || update.message.video || update.message.document || update.message.audio || update.message.voice)) {
+      // медиа от учителя (в ЛС)
+      if (
+        update.message &&
+        (
+          (update.message.photo && update.message.photo.length) ||
+          update.message.video ||
+          update.message.document ||
+          update.message.audio ||
+          update.message.voice
+        )
+      ) {
         await handleMediaFromTeacher(env, token, update.message, state);
         return OK();
       }
 
+      // по умолчанию — ок
       return OK();
     }
 
+    // неизвестный путь
     return NO();
   }
 };
+
