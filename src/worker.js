@@ -175,8 +175,9 @@ function extractDelayMinutes(text) { const m = normalize(text).match(/\bна\s+(
 
 // определяем какой набор "времен" нужен по тексту
 function scopeFromText(t) {
-  if (/(продл[её]нк|гпд)\b/.test(t)) return "aftercare";
-  if (/\bполдн(ик|ек)\b/.test(t)) return "snack";
+  // t сюда уже приходит НОРМАЛИЗОВАННЫЙ (normalize)
+  if (/(продл[её]н|гпд)/.test(t)) return "aftercare"; // продленка / продлёнка / гпд
+  if (/полдн(ик|ек)/.test(t)) return "snack"; // полдник / полденек (частые опечатки)
   return "main";
 }
 function mappingFieldByScope(scope) {
@@ -548,27 +549,7 @@ if (!/подвоз/.test(t) && /(автобус|расписани[ея].*авт
     return true;
   }
 
- // «когда/во сколько заканчивается продлёнка/полдник» → ответ по времени (из /pickup_set)
-if (/(когда|во сколько|до скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
-  const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
-  if (r.ok) {
-    await sendToSameThread("sendMessage", token, msg, { text: r.text });
-    await rememberContext(env, msg, "bot", r.text);
-  }
-  return true;
-}
-
-// Короткие запросы «продлёнка» или «полдник» без уточнений — тоже выдаём время (на сегодня/завтра)
-if (/^(.*\b)?(продл[её]нка|гпд)\b/.test(t) || /\bполдник\b/.test(t)) {
-  const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
-  if (r.ok) {
-    await sendToSameThread("sendMessage", token, msg, { text: r.text });
-    await rememberContext(env, msg, "bot", r.text);
-  }
-  return true;
-}
- 
-  // Не знаем — молчим. При включенной пересылке — перекидываем учителю.
+   // Не знаем — молчим. При включенной пересылке — перекидываем учителю.
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Вопрос] ${msg.chat.title || msg.chat.id}:\n${raw}` });
   }
@@ -662,15 +643,12 @@ async function handleCommand(env, token, msg, state) {
 
       // публикуем таблицу в привязанные чаты
       {
-        const rec = state.classes[cls];
-        const targets = [rec.general_chat_id, rec.parents_chat_id].filter(Boolean);
-        const table = formatWeekTable(mapping);
-        for (const chatId of targets) {
-          await sendSafe("sendMessage", token, {
-            chat_id: chatId,
-            text: `Обновлено время (${scopeLabel}, ${cls}):\n${table}`
-          });
-        }
+              const rec = state.classes[cls];
+      for (const chatId of [rec.general_chat_id, rec.parents_chat_id].filter(Boolean)) {
+        await sendSafe("sendMessage", token, {
+          chat_id: chatId,
+          text: `Обновлено время (${scopeLabel}, ${cls}):\n${formatWeekTable(mapping)}`
+        });
       }
       return true;
     }
