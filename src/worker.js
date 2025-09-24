@@ -530,15 +530,15 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «какие уроки сегодня/завтра/в среду…» — прислать расписание уроков
-  if (/(какие|что за).*(урок|предмет|заняти|на завтра|на сегодня|на понедельник|на вторник|на среду|на четверг|на пятницу|на субботу|сегодня|завтра)/.test(t) {
-    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-    const rec = state.classes[cls] || {};
-    if (rec.schedule_file_id) {
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
-    }
-    return true;
+  // «какие уроки …» — фото расписания УРОКОВ
+if (/((какие|что за).*(урок|предмет|заняти))/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.schedule_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
   }
+  return true;
+}
 
   // «звонки»
 if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
