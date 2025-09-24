@@ -377,7 +377,51 @@ async function handleNaturalMessage(env, token, msg, state){
       return true;
     }
   }
+// --- МЕДИА: пополнение карты / баланс (копилки) ---
+  // выдаём загруженные в ЛС комплекты
+  if (/(как.*попол|пополни(ть|м).*карт|реквизит.*карт|пополн.*карта)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+    const items = (state.classes[cls]?.media?.topup || []).slice(0, 20);
+    if (items.length) await sendMediaItems(token, msg, items);
+    return true;
+  }
+  if (/(баланс|остаток.*карт|как.*проверить.*баланс|проверить.*баланс)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+    const items = (state.classes[cls]?.media?.balance || []).slice(0, 20);
+    if (items.length) await sendMediaItems(token, msg, items);
+    return true;
+  }
 
+  // --- РАСПИСАНИЕ УРОКОВ (фото) ---
+  // примеры: "расписание уроков", "какие уроки в среду", "что за уроки завтра"
+  if (
+    /(расписани[ея].*(урок|класс)|какие|что за)/.test(t) &&
+    /(урок|предмет)/.test(t)
+  ) {
+    const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+    const rec = state.classes[cls] || {};
+    if (rec.schedule_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.schedule_file_id,
+        caption: rec.schedule_caption || `Расписание ${cls}`
+      });
+    }
+    return true;
+  }
+
+  // --- ЗВОНКИ по формулировке "до скольки ..." ---
+  // примеры: "до скольки занятия", "до скольки уроки"
+  if (/(до\s*скольк[аио]).*(занят|урок|школ)/.test(t)) {
+    const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+    const rec = state.classes[cls] || {};
+    if (rec.bells_file_id) {
+      await sendToSameThread("sendPhoto", token, msg, {
+        photo: rec.bells_file_id,
+        caption: rec.bells_caption || `Звонки ${cls}`
+      });
+    }
+    return true;
+  }
   // teach-правила
   const taught = findTeachAnswer(state, raw);
   if (taught){
