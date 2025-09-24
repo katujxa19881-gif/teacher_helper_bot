@@ -531,7 +531,7 @@ async function handleNaturalMessage(env, token, msg, state) {
   }
 
   // «какие уроки сегодня/завтра/в среду…» — прислать расписание уроков
-  if (/(какие|что за|расписани[ея]).*(урок|предмет|заняти|на завтра|на сегодня|на понедельник|на вторник|на среду|на четверг|на пятницу|на субботу|сегодня|завтра)/.test(t)
+  if (/(какие|что за).*(урок|предмет|заняти|на завтра|на сегодня|на понедельник|на вторник|на среду|на четверг|на пятницу|на субботу|сегодня|завтра)/.test(t)
       || (/расписани[ея]/.test(t) && !/автобус|звонк|подвоз/.test(t))) {
     const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
     const rec = state.classes[cls] || {};
@@ -541,15 +541,15 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «звонки» (короткий запрос)
-  if (/(расписани.*звонк|когда перемена|во сколько звонок|звонки)/.test(t)) {
-    const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-    const rec = state.classes[cls] || {};
-    if (rec.bells_file_id) {
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` });
-    }
-    return true;
+  // «звонки»
+if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.bells_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` });
   }
+  return true;
+}
 
   // Не знаем — молчим (но можем перекинуть учителю)
   if (state.forward_unknown_to_teacher && state.teacher_id) {
