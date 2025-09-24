@@ -543,6 +543,26 @@ if (!/подвоз/.test(t) && /(автобус|расписани[ея].*авт
     return true;
   }
 
+ // «когда/во сколько заканчивается продлёнка/полдник» → ответ по времени (из /pickup_set)
+if (/(когда|во сколько|до скольки).*(заканч|конча).*(продл[её]нк|гпд|полдник)/i.test(t)) {
+  const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+  if (r.ok) {
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
+  }
+  return true;
+}
+
+// Короткие запросы «продлёнка» или «полдник» без уточнений — тоже выдаём время (на сегодня/завтра)
+if (/^(.*\b)?(продл[её]нка|гпд)\b/.test(t) || /\bполдник\b/.test(t)) {
+  const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+  if (r.ok) {
+    await sendToSameThread("sendMessage", token, msg, { text: r.text });
+    await rememberContext(env, msg, "bot", r.text);
+  }
+  return true;
+}
+ 
   // Не знаем — молчим. При включенной пересылке — перекидываем учителю.
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Вопрос] ${msg.chat.title || msg.chat.id}:\n${raw}` });
