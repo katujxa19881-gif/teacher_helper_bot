@@ -67,23 +67,19 @@ async function saveState(env, state){ await env.KV_BOT.put("state", JSON.stringi
 function ensureClass(state, cls){
   if(!state.classes[cls]){
     state.classes[cls] = {
-      // привязки чатов
       general_chat_id:null,
       parents_chat_id:null,
 
-      // медиа: расписания уроков / звонков / автобусов / школьный подвоз
       schedule_file_id:null, schedule_caption:null,
-      bells_file_id:null, bells_caption:null,
-      bus_file_id:null, bus_caption:null, // городские автобусы
-      shuttle_file_id:null, shuttle_caption:null, // школьный подвоз
+      bells_file_id:null,    bells_caption:null,
+      bus_file_id:null,      bus_caption:null,     // городские автобусы
+      shuttle_file_id:null,  shuttle_caption:null, // школьный подвоз
 
-      // три независимых набора "времён"
-      pickup_times:null, // уроки (во сколько забирать)
-      aftercare_times:null, // продлёнка / ГПД
-      snack_times:null, // полдник
+      pickup_times:null,     // уроки
+      aftercare_times:null,  // продлёнка / ГПД
+      snack_times:null,      // полдник
 
-      // медиатеки по темам
-      media:{} // { topic: [ {type, file_id, caption} ] }
+      media:{}               // { topic: [ {type, file_id, caption} ] }
     };
   }
 }
@@ -122,7 +118,6 @@ function dayShortFromInput(s=""){
   const map={ "пн":"ПН","пон":"ПН","понедельник":"ПН","вт":"ВТ","вторник":"ВТ","ср":"СР","среда":"СР","чт":"ЧТ","четверг":"ЧТ","пт":"ПТ","пятница":"ПТ","сб":"СБ","суббота":"СБ","вс":"ВС","воскресенье":"ВС" };
   return map[n]||null;
 }
-
 const orderDays=["ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС"];
 function formatWeekTable(m){ return orderDays.map(d=>`${d} — ${m?.[d]||"—"}`).join("\n"); }
 
@@ -139,11 +134,13 @@ function findTeachAnswer(state, question){
 /* --------- Natural helpers ------------ */
 function extractTimeHHMM(text){ const m=text.match(/(\b[01]?\d|2[0-3]):([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
 function extractTimeFlexible(text){ const m=text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m?`${m[1].padStart(2,"0")}:${m[2]}`:null; }
-function extractDelayMinutes(text){ const m=normalize(text).match(/\bна\s+(\d{1,2})\s*мин/); return m?parseInt(m[1],10):null; }
+// не используем \b перед «на» — кириллица
+function extractDelayMinutes(text){ const m=normalize(text).match(/(?:^|\s)на\s+(\d{1,2})\s*мин/); return m?parseInt(m[1],10):null; }
 
+// область времени из текста (без \b на кириллице)
 function scopeFromText(t){
-  if (/(продленк|продлёнк|гпд)\b/.test(t)) return "aftercare";
-  if (/\bполдник\b/.test(t)) return "snack";
+  if (/(продленк|продлёнк|гпд)/.test(t)) return "aftercare";
+  if (/(полдник|полденик)/.test(t)) return "snack";
   return "main";
 }
 function fieldByScope(scope){
@@ -210,11 +207,11 @@ function clearMedia(state, cls){
 async function sendMediaItems(token, msg, items){
   for(const it of items){
     const cap = it.caption?.slice(0,1024);
-    if (it.type==="photo") await sendToSameThread("sendPhoto", token, msg, { photo: it.file_id, caption: cap });
-    else if (it.type==="video") await sendToSameThread("sendVideo", token, msg, { video: it.file_id, caption: cap });
-    else if (it.type==="document") await sendToSameThread("sendDocument", token, msg, { document: it.file_id, caption: cap });
-    else if (it.type==="audio") await sendToSameThread("sendAudio", token, msg, { audio: it.file_id, caption: cap });
-    else if (it.type==="voice") await sendToSameThread("sendVoice", token, msg, { voice: it.file_id, caption: cap });
+    if (it.type==="photo")     await sendToSameThread("sendPhoto", token, msg, { photo: it.file_id,    caption: cap });
+    else if (it.type==="video")     await sendToSameThread("sendVideo", token, msg, { video: it.file_id,    caption: cap });
+    else if (it.type==="document")  await sendToSameThread("sendDocument", token, msg, { document: it.file_id, caption: cap });
+    else if (it.type==="audio")     await sendToSameThread("sendAudio", token, msg, { audio: it.file_id,   caption: cap });
+    else if (it.type==="voice")     await sendToSameThread("sendVoice", token, msg, { voice: it.file_id,   caption: cap });
   }
 }
 
@@ -238,8 +235,8 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
     return true;
   }
 
-  // ПОДВОЗ — школьные автобусы
-  if (/\b(подвоз|школьн(ый|ые|ого|ых)\s*автобус(ы|ов)?|шк-?автобус(ы)?|школ.*автобус(ы|ов)?)\b/.test(n)){
+  // ПОДВОЗ (без \b на кириллице)
+  if ((/(подвоз)/.test(n)) || (/школьн(ый|ые|ого|ых)\s*автобус(ы|ов)?/.test(n)) || (/шк-?автобус(ы)?/.test(n)) || (/школ.*автобус(ы|ов)?/.test(n))){
     state.classes[cls].shuttle_file_id = file_id;
     state.classes[cls].shuttle_caption = caption;
     await saveState(env, state);
@@ -249,7 +246,7 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
   }
 
   // ГОРОДСКИЕ АВТОБУСЫ
-  if (/\b(автобус(ы|ов)?|расписани[ея].*автобус|график.*автобус|маршрут(ы)?|городск(ой|ие)|муниципал|bus|№\s*\d+|авт\.)\b/.test(n)){
+  if (/автобус(ы|ов)?/.test(n) || /расписани[ея].*автобус/.test(n) || /график.*автобус/.test(n) || /маршрут(ы)?/.test(n) || /городск(ой|ие)/.test(n) || /муниципал/.test(n) || /bus/.test(n) || /№\s*\d+/.test(n) || /авт\./.test(n)){
     state.classes[cls].bus_file_id = file_id;
     state.classes[cls].bus_caption = caption;
     await saveState(env, state);
@@ -288,12 +285,12 @@ async function handleMediaFromTeacher(env, token, msg, state){
 
   const n = normalize(caption);
 
-  // копилки без автопубликации
-  if (/\b(попол|пополн|оплат|платеж).*(карт|карта)|карта.*(попол|оплат)/.test(n)){
+  // копилки без автопубликации (убрал \b)
+  if ((/(попол|пополн|оплат|платеж).*(карт|карта)/.test(n)) || (/карта.*(попол|оплат)/.test(n))){
     pushMedia(state, cls, "topup", { type, file_id, caption }); await saveState(env,state);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Сохранено (${cls} — topup).` }); return;
   }
-  if (/\bбаланс|остаток.*карт|проверить.*баланс/.test(n)){
+  if (/баланс/.test(n) || /остаток.*карт/.test(n) || /проверить.*баланс/.test(n)){
     pushMedia(state, cls, "balance", { type, file_id, caption }); await saveState(env,state);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Сохранено (${cls} — balance).` }); return;
   }
@@ -318,7 +315,7 @@ async function handleNaturalMessage(env, token, msg, state){
     return true;
   }
 
-  // привет/спасибо — короткие ответы
+  // привет/спасибо
   if (/(^| )(привет|здравствуй|здравствуйте|добрый день|доброе утро|добрый вечер)( |!|$)/.test(t)){
     await sendToSameThread("sendMessage", token, msg, { text: `${pref}${state.teacher_display_name}: здравствуйте!` });
     return true;
@@ -363,76 +360,80 @@ async function handleNaturalMessage(env, token, msg, state){
     return true;
   }
 
-  // когда заканчивается 2 урок — отправляем картинку со звонками
+  // когда заканчивается 2 урок — показать звонки
   if (/(когда|во сколько).*(заканчива|конча).*(урок|пара)/.test(t) || /(во сколько звонок|расписани.*звонк)/.test(t)){
-    const cls = parseClassFrom(raw);
-    ensureClass(state, cls);
+    const cls = parseClassFrom(raw); ensureClass(state, cls);
     const rec = state.classes[cls]||{};
     if (rec.bells_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption||`Звонки ${cls}` });
-    }
-    return true;
+      await sendToSameThread("sendPhoto",
+      token,
+      msg,
+      { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` }
+    );
   }
+  return true;
+}
 
-  // ВО СКОЛЬКО/КОГДА ЗАБИРАТЬ ... (уроки/продлёнка/полдник)
-  if (/(во сколько|когда).*(забир|забрать|забирать)/.test(t)){
-    const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+// ПОДВОЗ (школьные автобусы)
+if (/\b(подвоз|школьн(ый|ые)|шк-?автобус|школ.*автобус)\b/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+  ensureClass(state, cls);
+  const rec = state.classes[cls] || {};
+  if (rec.shuttle_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.shuttle_file_id,
+      caption: rec.shuttle_caption || `Подвоз — ${cls}`
+    });
+  } else if (rec.bus_file_id) {
+    // мягкий фолбэк, чтобы не молчать
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bus_file_id,
+      caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)"
+    });
+  } else {
+    await sendToSameThread("sendMessage", token, msg, {
+      text: `Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} подвоз (школьный)».`
+    });
+  }
+  return true;
+}
+
+// АВТОБУСЫ (городские/муниципальные)
+if (
+  /\b(автобус(ы)?|маршрут(ы)?|городск(ой|ие)|муниципал|bus)\b/.test(t) ||
+  /расписани[ея].*автобус/.test(t)
+) {
+  const cls = pickClassFromChat(state, msg.chat.id) || parseClassFrom(raw);
+  ensureClass(state, cls);
+  const rec = state.classes[cls] || {};
+  if (rec.bus_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bus_file_id,
+      caption: rec.bus_caption || `Автобусы — ${cls}`
+    });
+  } else if (rec.shuttle_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.shuttle_file_id,
+      caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)"
+    });
+  } else {
+    await sendToSameThread("sendMessage", token, msg, {
+      text: `Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} автобусы (городские)».`
+    });
+  }
+  return true;
+}
+
+// «во сколько/когда забирать» (уроки/продлёнка/полдник)
+// — ТОЛЬКО текстовый ответ со времени из /pickup_set
+if (/(во сколько|когда).*(забир|забрать|забирать)/.test(t) || /(продленк|продлёнк|полдник)\b/.test(t)) {
+  const r = resolveTimeNatural(state, msg, raw, state.teacher_display_name);
+  if (r.ok) {
     await sendToSameThread("sendMessage", token, msg, { text: r.text });
-    return true;
+    await rememberContext(env, msg, "bot", r.text);
   }
-
-  // Карта / Баланс — комплект документов
-  if (/(как.*пополн|пополнить.*карт|пополнение карты)/.test(t)){
-    const cls = parseClassFrom(raw)||"1Б"; ensureClass(state, cls);
-    const items = (state.classes[cls]?.media?.topup || []).slice(0,20);
-    if (items.length) await sendMediaItems(token, msg, items);
-    return true;
-  }
-  if (/(баланс.*карт|как проверить баланс)/.test(t)){
-    const cls = parseClassFrom(raw)||"1Б"; ensureClass(state, cls);
-    const items = (state.classes[cls]?.media?.balance || []).slice(0,20);
-    if (items.length) await sendMediaItems(token, msg, items);
-    return true;
-  }
-
-  // РАСПИСАНИЕ УРОКОВ (не перехватывает автобусы/подвоз/звонки)
-  if (/(какие|что за).*(урок|предмет).*(сегодня|завтра|понедельник|вторник|сред(а|у)|четверг|пятниц|суббот|воскресен)/.test(t)
-      || (/расписани/.test(t) && !/автобус|подвоз|звонк/.test(t))){
-    const cls = parseClassFrom(raw)||"1Б"; ensureClass(state, cls);
-    const rec = state.classes[cls]||{};
-    if (rec.schedule_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.schedule_file_id, caption: rec.schedule_caption||`Расписание ${cls}` });
-    }
-    return true;
-  }
-
-  // ПОДВОЗ (школьные автобусы) — ставим выше "автобусов", чтобы не путать
-  if (/\b(подвоз|школьн(ый|ые|ого|ых)\s*автобус(ы|ов)?|шк-?автобус(ы)?|школ.*автобус(ы|ов)?)\b/.test(t)){
-    const cls = parseClassFrom(raw)||"1Б"; ensureClass(state, cls);
-    const rec = state.classes[cls]||{};
-    if (rec.shuttle_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption||`Подвоз — ${cls}` });
-    }else if (rec.bus_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption||`Автобусы — ${cls}`)+`\n(подвоз не загружен)` });
-    }else{
-      await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} подвоз (школьный)».` });
-    }
-    return true;
-  }
-
-  // АВТОБУСЫ (городские/муниципальные)
-  if (/\b(автобус(ы|ов)?|расписани[ея].*автобус|график.*автобус|маршрут(ы)?|городск(ой|ие)|муниципал|bus|№\s*\d+|авт\.)\b/.test(t)){
-    const cls = parseClassFrom(raw)||"1Б"; ensureClass(state, cls);
-    const rec = state.classes[cls]||{};
-    if (rec.bus_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption||`Автобусы — ${cls}` });
-    }else if (rec.shuttle_file_id){
-      await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: (rec.shuttle_caption||`Подвоз — ${cls}`)+`\n(городские автобусы не загружены)` });
-    }else{
-      await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} автобусы (городские)».` });
-    }
-    return true;
-  }
+  return true;
+}
 
   // Не знаем — молчим или перекидываем учителю
   if (state.forward_unknown_to_teacher && state.teacher_id){
