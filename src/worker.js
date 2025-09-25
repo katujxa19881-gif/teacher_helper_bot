@@ -194,6 +194,15 @@ function isShuttleQuery(t) {
   return re.test(t);
 }
 
+function isScheduleLessonsQuery(t) {
+  // запросы про РАСПИСАНИЕ УРОКОВ (не автобусы/подвоз/звонки)
+  return (
+    /((какие|что за)\s+(урок[а-яa-z]*|предмет[а-яa-z]*|заняти[а-яa-z]*))/i.test(t) ||
+    ( /расписани[ея]/i.test(t) && !/(автобус|подвоз|звонк)/i.test(t) ) ||
+    /(до\s+скольк[аи].*(урок|заняти))/i.test(t)
+  );
+}
+
 /* область времени из текста (уроки/продлёнка/полдник) */
 function scopeFromText(t) {
   const n = normalize(t);
@@ -231,18 +240,21 @@ function resolveTimeNatural(state, msg, freeText, teacherName) {
   return { ok: true, text: `${pref}${teacherName}: ${cls}, ${tag}, ${dayNameFull(d)} — забираем в ${t}.` };
 }
 
-/* ------------- MEDIA LIB -------------- */
+/* ========== MEDIA HELPERS ========== */
+
 function pushMedia(state, cls, topic, item) {
   ensureClass(state, cls);
   const lib = state.classes[cls].media ||= {};
   const arr = lib[topic] ||= [];
   if (!arr.some(x => x.file_id === item.file_id)) arr.push(item); // антидубль
 }
+
 function listMedia(state, cls) {
   ensureClass(state, cls);
   const lib = state.classes[cls].media || {};
   return Object.fromEntries(Object.entries(lib).map(([k, v]) => [k, v.length]));
 }
+
 function delMedia(state, cls, topic, idx) {
   ensureClass(state, cls);
   const lib = state.classes[cls].media || {};
@@ -254,6 +266,7 @@ function delMedia(state, cls, topic, idx) {
   if (!lib[topic].length) delete lib[topic];
   return true;
 }
+
 function clearMedia(state, cls) {
   ensureClass(state, cls);
   state.classes[cls].media = {};
@@ -264,10 +277,36 @@ async function sendMediaItems(token, msg, items) {
     const cap = it.caption?.slice(0, 1024);
     if (it.type === "photo") await sendToSameThread("sendPhoto", token, msg, { photo: it.file_id, caption: cap });
     else if (it.type === "video") await sendToSameThread("sendVideo", token, msg, { video: it.file_id, caption: cap });
-    else if (it.type === "document") await sendToSameThread("sendDocument", token, msg, { document: it.file_id, caption: cap });
+    else if (it.type === "document")await sendToSameThread("sendDocument", token, msg, { document: it.file_id, caption: cap });
     else if (it.type === "audio") await sendToSameThread("sendAudio", token, msg, { audio: it.file_id, caption: cap });
     else if (it.type === "voice") await sendToSameThread("sendVoice", token, msg, { voice: it.file_id, caption: cap });
   }
+}
+
+/* ========== teach-token helper ========== */
+/* Позволяет правилом /teach прислать одно из “статичных” фото:
+   [[SCHEDULE]] — расписание уроков (schedule_file_id)
+   [[BELLS]] — расписание звонков (bells_file_id)
+   [[BUS]] — городские автобусы (bus_file_id)
+   [[SHUTTLE]] — школьный подвоз (shuttle_file_id)
+*/
+async function sendTeachToken(token, msg, state, tokenName) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  ensureClass(state, cls);
+  const rec = state.classes[cls] || {};
+
+  const map = {
+    "SCHEDULE": { id: rec.schedule_file_id, cap: rec.schedule_caption || `Расписание ${cls}` },
+    "BELLS": { id: rec.bells_file_id, cap: rec.bells_caption || `Звонки ${cls}` },
+    "BUS": { id: rec.bus_file_id, cap: rec.bus_caption || `Автобусы ${cls}` },
+    "SHUTTLE": { id: rec.shuttle_file_id, cap: rec.shuttle_caption || `Подвоз ${cls}` },
+  };
+
+  const item = map[(tokenName || "").toUpperCase()];
+  if (!item || !item.id) return false;
+
+  await sendToSameThread("sendPhoto", token, msg, { photo: item.id, caption: item.cap });
+  return true;
 }
 
 /* --------------- commands -------------- */
@@ -400,14 +439,23 @@ async function handleNaturalMessage(env, token, msg, state) {
 
   await rememberContext(env, msg, "user", raw);
 
-  // teach
-  const taught = findTeachAnswer(state, raw);
-  if (taught) {
-    const txt = `${pref}${state.teacher_display_name}: ${taught}`;
-    await sendToSameThread("sendMessage", token, msg, { text: txt });
-    await rememberContext(env, msg, "bot", txt);
+  // teach-правила
+const taught = findTeachAnswer(state, raw);
+if (taught) {
+  // если ответ вида [[TOKEN]] — шлём соответствующую картинку
+  const m = taught.match(/^\s*\[\[\s*([A-Z_]+)\s*\]\]\s*$/i);
+  if (m) {
+    const ok = await sendTeachToken(token, msg, state, m[1]);
+    if (ok) { await rememberContext(env, msg, "bot", `[[${m[1].toUpperCase()}]]`); return true; }
+    // если файла нет — молчим (по вашей политике)
     return true;
   }
+  // иначе — обычный текст
+  const txt = `${pref}${state.teacher_display_name}: ${taught}`;
+  await sendToSameThread("sendMessage", token, msg, { text: txt });
+  await rememberContext(env, msg, "bot", txt);
+  return true;
+}
 
   // ---- АВТОБУСЫ / ПОДВОЗ: обрабатываем первыми, чтобы не спутать с "расписанием уроков"
   if (isShuttleQuery(t) || isBusQuery(t)) {
@@ -442,7 +490,30 @@ async function handleNaturalMessage(env, token, msg, state) {
     }
     return true;
   }
-
+  
+ // «звонки»
+if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.bells_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` });
+  }
+  return true;
+}
+  
+ // РАСПИСАНИЕ УРОКОВ (фото с расписанием уроков)
+if (isScheduleLessonsQuery(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.schedule_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.schedule_file_id,
+      caption: rec.schedule_caption || `Расписание ${cls}`
+    });
+  }
+  return true; // даже если файла нет — молчим (по вашему правилу «если не знаю — молчу»)
+}
+  
   // привет/спасибо
   if (/(^| )(привет|здравствуй|здравствуйте|добрый день|доброе утро|добрый вечер)( |!|$)/.test(t)) {
     const txt = `${pref}${state.teacher_display_name}: здравствуйте!`;
@@ -533,31 +604,7 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «звонки»
-if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.bells_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` });
-  }
-  return true;
-}
-  
-  // УРОКИ / ЗАНЯТИЯ — фото расписания уроков
-if (/((какие|что за)\s+(урок[а-яa-z]*|предмет[а-яa-z]*|заняти[а-яa-z]*))/i.test(t)
-    || /(расписани[ея])(?!.*(автобус|подвоз|звонк))/i.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.schedule_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.schedule_file_id,
-      caption: rec.schedule_caption || `Расписание ${cls}`
-    });
-  }
-  return true;
-}
-
-   // Не знаем — молчим (но можем перекинуть учителю)
+    // Не знаем — молчим (но можем перекинуть учителю)
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Вопрос] ${msg.chat.title || msg.chat.id}:\n${raw}` });
   }
