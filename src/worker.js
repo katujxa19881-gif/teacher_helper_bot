@@ -174,13 +174,15 @@ function extractTimeFlexible(text) { const m = text.match(/\b([01]?\d|2[0-3])[.:
 function extractDelayMinutes(text) { const m = normalize(text).match(/\bна\s+(\d{1,2})\s*мин/); return m ? parseInt(m[1], 10) : null; }
 
 // ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ автобусы
-function isBusQuery(t){
-  return /\b(расписани[ея].*автобус|автобус(?:ы)?|маршрут(?:ы)?|городск\w*\s+автобус\w*|муниципал\w*\s+автобус\w*)\b/.test(t);
+function isBusQuery(t) {
+  // без \b, чтобы кириллица стабильно ловилась
+  return /(расписани[ея].*автобус|автобус(?:ы)?|маршрут(?:ы)?|городск\w*\s*автобус\w*|муниципал\w*\s*автобус\w*)/i.test(t);
 }
 
 // ШКОЛЬНЫЙ ПОДВОЗ
-function isShuttleQuery(t){
-  return /\b(подвоз|школьн\w*\s+автобус\w*|шк-?автобус|школ\w*\s*автобус\w*)\b/.test(t);
+function isShuttleQuery(t) {
+  // тоже без \b
+  return /(подвоз|школьн\w*\s*автобус\w*|шк-?автобус|школ\w*\s*автобус\w*)/i.test(t);
 }
 
 /* область времени из текста (уроки/продлёнка/полдник) */
@@ -534,7 +536,7 @@ if (/(расписани.*звонк|когда перемена|во сколь
   
   // УРОКИ / ЗАНЯТИЯ — фото расписания уроков
 if (/((какие|что за)\s+(урок\w*|предмет\w*|заняти\w*))/i.test(t)
-    || /\bрасписани[ея]\b(?!.*(автобус|звонк|подвоз))/i.test(msg.text || "")) {
+    || /(расписани[ея])(?!.*(автобус|звонк|подвоз))/i.test(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
   const rec = state.classes[cls] || {};
   if (rec.schedule_file_id) {
