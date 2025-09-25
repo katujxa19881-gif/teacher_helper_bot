@@ -128,10 +128,20 @@ async function publishSingleFileToClassChats(token,state,cls,file_id,caption){
 async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, file_id){
   const n = normalize(caption);
 
+  // Определяем приоритет: сначала проверяем расписание уроков
+  if(/расписан|урок|занят|предмет/.test(n) && !/(автобус|подвоз|звонк)/.test(n)){
+    state.classes[cls].schedule_file_id = file_id;
+    state.classes[cls].schedule_caption = caption;
+    await saveState(env,state);
+    await publishSingleFileToClassChats(token,state,cls,file_id,caption);
+    await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Расписание уроков для ${cls} опубликовано ✅` });
+    return true;
+  }
+
   // звонки
   if(/звонк/.test(n)){
-    state.classes[cls].bells_file_id=file_id;
-    state.classes[cls].bells_caption=caption;
+    state.classes[cls].bells_file_id = file_id;
+    state.classes[cls].bells_caption = caption;
     await saveState(env,state);
     await publishSingleFileToClassChats(token,state,cls,file_id,caption);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Звонки для ${cls} опубликованы ✅` });
@@ -140,8 +150,8 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
 
   // подвоз (школьные автобусы)
   if(/подвоз|школьн[а-я]*\s*автобус/.test(n)){
-    state.classes[cls].shuttle_file_id=file_id;
-    state.classes[cls].shuttle_caption=caption;
+    state.classes[cls].shuttle_file_id = file_id;
+    state.classes[cls].shuttle_caption = caption;
     await saveState(env,state);
     await publishSingleFileToClassChats(token,state,cls,file_id,caption);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Подвоз (школьные автобусы) для ${cls} опубликован ✅` });
@@ -150,8 +160,8 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
 
   // городские автобусы
   if(/автобус|маршрут|bus/.test(n)){
-    state.classes[cls].bus_file_id=file_id;
-    state.classes[cls].bus_caption=caption;
+    state.classes[cls].bus_file_id = file_id;
+    state.classes[cls].bus_caption = caption;
     await saveState(env,state);
     await publishSingleFileToClassChats(token,state,cls,file_id,caption);
     await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Автобусы (городские) для ${cls} опубликованы ✅` });
@@ -159,8 +169,8 @@ async function handleScheduleBusesUpload(env, token, msg, state, cls, caption, f
   }
 
   // по умолчанию — расписание уроков
-  state.classes[cls].schedule_file_id=file_id;
-  state.classes[cls].schedule_caption=caption;
+  state.classes[cls].schedule_file_id = file_id;
+  state.classes[cls].schedule_caption = caption;
   await saveState(env,state);
   await publishSingleFileToClassChats(token,state,cls,file_id,caption);
   await sendSafe("sendMessage", token, { chat_id: msg.chat.id, text:`Расписание уроков для ${cls} опубликовано ✅` });
