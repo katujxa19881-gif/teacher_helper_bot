@@ -116,6 +116,22 @@ async function sendMediaItems(token,msg,items){
   }
 }
 
+async function sendTeachToken(token, msg, state, tokenName) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  ensureClass(state, cls);
+  const rec = state.classes[cls] || {};
+  const map = {
+    "SCHEDULE": { id: rec.schedule_file_id, cap: rec.schedule_caption || `Расписание ${cls}` },
+    "BELLS": { id: rec.bells_file_id, cap: rec.bells_caption || `Звонки ${cls}` },
+    "BUS": { id: rec.bus_file_id, cap: rec.bus_caption || `Автобусы — ${cls}` },
+    "SHUTTLE": { id: rec.shuttle_file_id, cap: rec.shuttle_caption || `Подвоз — ${cls}` }
+  };
+  const item = map[(tokenName || "").toUpperCase()];
+  if (!item || !item.id) return false;
+  await sendToSameThread("sendPhoto", token, msg, { photo: item.id, caption: item.cap });
+  return true;
+}
+
 /* -------- загрузка от учителя -------- */
 async function publishSingleFileToClassChats(token,state,cls,file_id,caption){
   const rec = state.classes[cls];
@@ -198,12 +214,26 @@ async function handleNaturalMessage(env, token, msg, state){
   const t = normalize(raw);
   const pref = addressPrefix(msg);
 
-  // TEACH токены-картинки (если захочешь, можно добавить правила с буквенными токенами)
-  const taught = findTeachAnswer(state, raw);
-  if(taught){
-    await sendToSameThread("sendMessage", token, msg, { text: `${pref}${state.teacher_display_name}: ${taught}` });
+  // teach с поддержкой [[SCHEDULE]]/[[BUS]]/[[SHUTTLE]]/[[BELLS]]
+const taught = findTeachAnswer(state, raw);
+if (taught) {
+  const t = taught.trim().toUpperCase();
+  const m = t.match(/^\[\[(SCHEDULE|BUS|SHUTTLE|BELLS)\]\]$/);
+  if (m) {
+    const ok = await sendTeachToken(token, msg, state, m[1]);
+    if (ok) { await rememberContext(env, msg, "bot", `TEACH:${m[1]}`); return true; }
+    // если файла нет — мягкий текстовый ответ
+    const fallback = `${pref}${state.teacher_display_name}: файла для ${m[1]} пока нет.`;
+    await sendToSameThread("sendMessage", token, msg, { text: fallback });
+    await rememberContext(env, msg, "bot", fallback);
+    return true;
+  } else {
+    const txt = `${pref}${state.teacher_display_name}: ${taught}`;
+    await sendToSameThread("sendMessage", token, msg, { text: txt });
+    await rememberContext(env, msg, "bot", txt);
     return true;
   }
+}
 
   // ---------- РАСПИСАНИЕ УРОКОВ ----------
   if(isScheduleLessonsQuery(t)){
