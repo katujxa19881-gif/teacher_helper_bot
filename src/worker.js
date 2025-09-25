@@ -178,34 +178,28 @@ function isLessonQuery(t){
   return /(урок(и|ов)?|занят(ие|ия)|предмет(ы)?)/i.test(t);
 }
 
-// ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ автобусы
-function isBusQuery(t) {
-  // без \b, и без \w — используем явный класс с кириллицей/латиницей/цифрами/дефисом/подчёркиванием
-  const W = "[a-zа-я0-9_-]*";
-  const re = new RegExp(
-    `(?:расписани[ея].*автобус|автобус(?:ы)?|маршрут(?:ы)?|городск${W}\\s*автобус${W}|муниципал${W}\\s*автобус${W})`,
-    "i"
-  );
-  return re.test(t);
-}
-
-// ШКОЛЬНЫЙ ПОДВОЗ
-function isShuttleQuery(t) {
-  const W = "[a-zа-я0-9_-]*";
-  const re = new RegExp(
-    `(?:подвоз|школьн${W}\\s*автобус${W}|шк-?автобус|школ${W}\\s*автобус${W})`,
-    "i"
-  );
-  return re.test(t);
-}
-
+// «уроки» / «расписание уроков»
 function isScheduleLessonsQuery(t) {
-  // запросы про РАСПИСАНИЕ УРОКОВ (не автобусы/подвоз/звонки)
-  return (
-    /((какие|что за)\s+(урок[а-яa-z]*|предмет[а-яa-z]*|заняти[а-яa-z]*))/i.test(t) ||
-    ( /расписани[ея]/i.test(t) && !/(автобус|подвоз|звонк)/i.test(t) ) ||
-    /(до\s+скольк[аи].*(урок|заняти))/i.test(t)
-  );
+  // 1) "какие ... уроки/предметы ..."
+  if (/(какие|что за)\s+.*(урок|предмет)/i.test(t)) return true;
+  // 2) "расписание ..." но не автобусов/подвоза/звонков
+  if (/расписани[ея]/i.test(t) && !/(автобус|подвоз|звонк)/i.test(t)) return true;
+  return false;
+}
+
+// городские/муниципальные автобусы
+function isBusQuery(t) {
+  // авт. запрос ДОЛЖЕН содержать слово "автобус(ы)" или "маршрут"
+  // и НЕ содержать слов урок/занят/звонк
+  return /(автобус|автобусы|маршрут|городск(?:ие|ой)|муниципал)/i.test(t)
+    && !/(урок|занят|звонк)/i.test(t);
+}
+
+// школьный подвоз (обязательно слово "подвоз" ИЛИ связка "школьн.*автобус")
+function isShuttleQuery(t) {
+  if (/\bподвоз\b/i.test(t)) return true;
+  if (/школьн\w*\s*автобус\w*/i.test(t)) return true;
+  return false;
 }
 
 /* область времени из текста (уроки/продлёнка/полдник) */
@@ -443,8 +437,23 @@ async function handleNaturalMessage(env, token, msg, state) {
   const pref = addressPrefix(msg);
 
   await rememberContext(env, msg, "user", raw);
+  
+// перед findTeachAnswer:
+const isSystemTopic =
+  isScheduleLessonsQuery(t) || isBusQuery(t) || isShuttleQuery(t) ||
+  /(расписани.*звонк|когда перемена|во сколько звонок)/i.test(t);
 
-  // teach-правила
+if (!isSystemTopic) {
+  const taught = findTeachAnswer(state, raw);
+  if (taught) {
+    const txt = `${pref}${state.teacher_display_name}: ${taught}`;
+    await sendToSameThread("sendMessage", token, msg, { text: txt });
+    await rememberContext(env, msg, "bot", txt);
+    return true;
+  }
+}
+
+    // teach-правила
 const taught = findTeachAnswer(state, raw);
 if (taught) {
   // если ответ вида [[TOKEN]] — шлём соответствующую картинку
@@ -462,53 +471,64 @@ if (taught) {
   return true;
 }
 
- // ПОДВОЗ (школьные автобусы) — НЕ отвечаем, если это про уроки
-if (isShuttleQuery(t) && !isLessonQuery(t)) {
+ // 1) СРАЗУ — "уроки" / "расписание уроков"
+if (isScheduleLessonsQuery(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
   const rec = state.classes[cls] || {};
-  if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
-  } else if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
-  } else {
-    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «подвоз». Загрузите в ЛС с подписью «${cls} подвоз (школьный)».` });
+  if (rec.schedule_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.schedule_file_id,
+      caption: rec.schedule_caption || `Расписание ${cls}`
+    });
   }
   return true;
 }
 
-// АВТОБУСЫ (городские) — НЕ отвечаем, если это про уроки
-if (isBusQuery(t) && !isLessonQuery(t)) {
+// 2) Подвоз (школьные)
+if (isShuttleQuery(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.shuttle_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.shuttle_file_id,
+      caption: rec.shuttle_caption || `Подвоз — ${cls}`
+    });
+  } else if (rec.bus_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bus_file_id,
+      caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)"
+    });
+  }
+  return true;
+}
+
+// 3) Автобусы (городские)
+if (isBusQuery(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
   const rec = state.classes[cls] || {};
   if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы — ${cls}` });
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bus_file_id,
+      caption: rec.bus_caption || `Автобусы — ${cls}`
+    });
   } else if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.shuttle_file_id, caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)" });
-  } else {
-    await sendToSameThread("sendMessage", token, msg, { text:`Для ${cls} нет файла «автобусы». Загрузите в ЛС с подписью «${cls} автобусы (городские)».` });
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.shuttle_file_id,
+      caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)"
+    });
   }
   return true;
 }
-  
- // «звонки»
-if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
+
+// 4) Звонки
+if (/(расписани.*звонк|когда перемена|во сколько звонок)/i.test(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
   const rec = state.classes[cls] || {};
   if (rec.bells_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.bells_file_id, caption: rec.bells_caption || `Звонки ${cls}` });
-  }
-  return true;
-}
-  
-// «какие уроки сегодня/завтра/в среду…» или «расписание уроков»
-if (
-  /(какие|что за|какое).*?(урок|предмет|заняти)/i.test(t) ||
-  /расписани[ея].*?(урок|класс|занят)/i.test(t)
-) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.schedule_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.bells_file_id,
+      caption: rec.bells_caption || `Звонки ${cls}`
+    });
   }
   return true;
 }
