@@ -446,8 +446,50 @@ async function handleNaturalMessage(env, token, msg, state) {
   const pref = addressPrefix(msg);
 
   await rememberContext(env, msg, "user", raw);
-  
-// перед findTeachAnswer:
+  const t = normalize(raw);
+
+// 1) СРАЗУ — "уроки" / "расписание уроков"
+if (isScheduleLessonsQuery(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.schedule_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.schedule_file_id,
+      caption: rec.schedule_caption || `Расписание ${cls}`,
+    });
+  } else {
+    await sendToSameThread("sendMessage", token, msg,
+      { text: `Для ${cls} ещё не загружено фото расписания уроков.` });
+  }
+  return true;
+}
+
+// 2) Подвоз (школьные)
+if (isShuttleQuery(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.shuttle_file_id) {
+    await sendToSameThread("sendPhoto", token, msg,
+      { photo: rec.shuttle_file_id, caption: rec.shuttle_caption || `Подвоз — ${cls}` });
+  } else if (rec.bus_file_id) {
+    await sendToSameThread("sendPhoto", token, msg,
+      { photo: rec.bus_file_id, caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)" });
+  }
+  return true;
+}
+
+// 3) Автобусы (городские/муниципальные)
+if (isBusQuery(t)) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.bus_file_id) {
+    await sendToSameThread("sendPhoto", token, msg,
+      { photo: rec.bus_file_id, caption: rec.bus_caption || `Автобусы — ${cls}` });
+  }
+  return true;
+}
+
+  // перед findTeachAnswer:
 const isSystemTopic =
   isScheduleLessonsQuery(t) || isBusQuery(t) || isShuttleQuery(t) ||
   /(расписани.*звонк|когда перемена|во сколько звонок)/i.test(t);
@@ -477,55 +519,6 @@ if (taught) {
   const txt = `${pref}${state.teacher_display_name}: ${taught}`;
   await sendToSameThread("sendMessage", token, msg, { text: txt });
   await rememberContext(env, msg, "bot", txt);
-  return true;
-}
-
- // 1) СРАЗУ — "уроки" / "расписание уроков"
-if (isScheduleLessonsQuery(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.schedule_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.schedule_file_id,
-      caption: rec.schedule_caption || `Расписание ${cls}`
-    });
-  }
-  return true;
-}
-
-// 2) Подвоз (школьные)
-if (isShuttleQuery(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.shuttle_file_id,
-      caption: rec.shuttle_caption || `Подвоз — ${cls}`
-    });
-  } else if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.bus_file_id,
-      caption: (rec.bus_caption || `Автобусы — ${cls}`) + "\n(подвоз не загружен)"
-    });
-  }
-  return true;
-}
-
-// 3) Автобусы (городские)
-if (isBusQuery(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.bus_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.bus_file_id,
-      caption: rec.bus_caption || `Автобусы — ${cls}`
-    });
-  } else if (rec.shuttle_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, {
-      photo: rec.shuttle_file_id,
-      caption: (rec.shuttle_caption || `Подвоз — ${cls}`) + "\n(городские автобусы не загружены)"
-    });
-  }
   return true;
 }
 
