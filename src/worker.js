@@ -173,22 +173,14 @@ function extractTimeHHMM(text) { const m = text.match(/(\b[01]?\d|2[0-3]):([0-5]
 function extractTimeFlexible(text) { const m = text.match(/\b([01]?\d|2[0-3])[.: \-]?([0-5]\d)\b/); return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null; }
 function extractDelayMinutes(text) { const m = normalize(text).match(/\bна\s+(\d{1,2})\s*мин/); return m ? parseInt(m[1], 10) : null; }
 
-/* --- запросы автобусов: сначала распознаём их, чтобы не перепутать с расписанием уроков --- */
-function isBusQuery(t) {
-  // городские/муниципальные автобусы
-  const n = normalize(t);
-  const has = (w) => new RegExp(`(^|[^a-z0-9а-я])${w}([^a-z0-9а-я]|$)`).test(n);
-  if (has("подвоз") || has("школьн") || /шк.?автобус/.test(n) || /школ.*автобус/.test(n)) return false; // это не городские
-  return (
-    has("автобус") || /расписани[ея].*автобус/.test(n) || /график.*автобус/.test(n) ||
-    has("маршрут") || has("городск") || has("муниципал") || has("bus")
-  );
+// ГОРОДСКИЕ/МУНИЦИПАЛЬНЫЕ автобусы
+function isBusQuery(t){
+  return /\b(расписани[ея].*автобус|автобус(?:ы)?|маршрут(?:ы)?|городск\w*\s+автобус\w*|муниципал\w*\s+автобус\w*)\b/.test(t);
 }
-function isShuttleQuery(t) {
-  // школьный подвоз (в школу и из школы)
-  const n = normalize(t);
-  const has = (w) => new RegExp(`(^|[^a-z0-9а-я])${w}([^a-z0-9а-я]|$)`).test(n);
-  return has("подвоз") || has("школьн") || /шк.?автобус/.test(n) || /школ.*автобус/.test(n);
+
+// ШКОЛЬНЫЙ ПОДВОЗ
+function isShuttleQuery(t){
+  return /\b(подвоз|школьн\w*\s+автобус\w*|шк-?автобус|школ\w*\s*автобус\w*)\b/.test(t);
 }
 
 /* область времени из текста (уроки/продлёнка/полдник) */
@@ -530,16 +522,6 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // «какие уроки …» — фото расписания УРОКОВ
-if (/((какие|что за).*(урок|предмет|заняти))/.test(t)) {
-  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
-  const rec = state.classes[cls] || {};
-  if (rec.schedule_file_id) {
-    await sendToSameThread("sendPhoto", token, msg, { photo: rec.schedule_file_id, caption: rec.schedule_caption || `Расписание ${cls}` });
-  }
-  return true;
-}
-
   // «звонки»
 if (/(расписани.*звонк|когда перемена|во сколько звонок|когда звонок|звонки)/.test(t)) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
@@ -549,8 +531,22 @@ if (/(расписани.*звонк|когда перемена|во сколь
   }
   return true;
 }
+  
+  // УРОКИ / ЗАНЯТИЯ — фото расписания уроков
+if (/((какие|что за)\s+(урок\w*|предмет\w*|заняти\w*))/i.test(t)
+    || /\bрасписани[ея]\b(?!.*(автобус|звонк|подвоз))/i.test(msg.text || "")) {
+  const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
+  const rec = state.classes[cls] || {};
+  if (rec.schedule_file_id) {
+    await sendToSameThread("sendPhoto", token, msg, {
+      photo: rec.schedule_file_id,
+      caption: rec.schedule_caption || `Расписание ${cls}`
+    });
+  }
+  return true;
+}
 
-  // Не знаем — молчим (но можем перекинуть учителю)
+   // Не знаем — молчим (но можем перекинуть учителю)
   if (state.forward_unknown_to_teacher && state.teacher_id) {
     await sendSafe("sendMessage", token, { chat_id: state.teacher_id, text: `[Вопрос] ${msg.chat.title || msg.chat.id}:\n${raw}` });
   }
