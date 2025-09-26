@@ -137,6 +137,59 @@ async function sendMediaItems(token, msg, items) {
   }
 }
 
+// ---- helper: разбить длинный текст на части ----
+function splitLongText(text, maxLen = 3800) {
+  if (!text || text.length <= maxLen) return [text || ""];
+  const parts = [];
+  let i = 0;
+  while (i < text.length) {
+    let chunk = text.slice(i, i + maxLen);
+    // постараемся не разрезать слово/строку посередине: отступ до последнего перевода строки
+    const lastNewline = chunk.lastIndexOf('\n');
+    if (lastNewline > Math.floor(maxLen * 0.5)) {
+      chunk = chunk.slice(0, lastNewline);
+      i += lastNewline + 1; // пропустить перев. строки
+    } else {
+      i += chunk.length;
+    }
+    parts.push(chunk);
+  }
+  return parts;
+}
+
+// ---- отправка полного списка teach'ов постранично ----
+async function sendTeachListAll(token, msg, state) {
+  // state.teach ожидается как массив правил: [{pat, ans, ...}, ...]
+  const list = state && state.teach ? state.teach : [];
+  if (!Array.isArray(list) || list.length === 0) {
+    await sendToSameThread("sendMessage", token, msg, { text: "Список teach-переводов пуст." });
+    return true;
+  }
+
+  // Собираем строки
+  const lines = [];
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i] || {};
+    // Некоторые записи могут храниться по-разному — подстрахуемся:
+    const pat = (r.pat || r.pattern || r.q || r.key || "").toString();
+    const ans = (r.ans || r.a || r.answer || r.reply || "").toString();
+    lines.push(`${i + 1}. "${pat}" => "${ans}"`);
+  }
+
+  const full = lines.join("\n");
+  const parts = splitLongText(full, 3800);
+
+  for (let j = 0; j < parts.length; j++) {
+    // Нумеруем страницы, чтобы удобно ориентироваться
+    const footer = (parts.length > 1) ? `\n\n(страница ${j + 1} из ${parts.length})` : "";
+    await sendToSameThread("sendMessage", token, msg, { text: parts[j] + footer });
+    // Небольшая пауза не обязательна, но может помочь при быстром швырянии сообщений
+    // await new Promise(res => setTimeout(res, 150));
+  }
+
+  return true;
+}
+
 /* ---- helper для teach-токенов ---- */
 async function sendTeachToken(token, msg, state, tokenName) {
   const cls = pickClassFromChat(state, msg.chat.id) || "1Б";
@@ -404,6 +457,8 @@ async function handleCommand(env, token, msg, state) {
       await sendToSameThread("sendMessage", token, msg, { text: "Все правила очищены ✅" });
       return true;
     }
+      case "/teach_list_all":
+  return await sendTeachListAll(token, msg, state);
 
     case "/diag": {
       const cls = parseClassFrom(args || "");
