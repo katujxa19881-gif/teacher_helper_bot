@@ -362,15 +362,21 @@ async function handleNaturalMessage(env, token, msg, state) {
     return true;
   }
 
-  // Небольшие вежливости
-  if (/(^|\s)(привет|здравствуй|здравствуйте|добрый день|доброе утро|добрый вечер)(!|$|\s)/.test(t)) {
-    await sendToSameThread("sendMessage", token, msg, { text: `${pref}${state.teacher_display_name}: здравствуйте!` });
-    return true;
-  }
-  if (/(^|\s)(спасибо|благодарю)(!|$|\s)/.test(t)) {
-    await sendToSameThread("sendMessage", token, msg, { text: `${pref}${state.teacher_display_name}: пожалуйста!` });
-    return true;
-  }
+  // --- привет/спасибо (только "чистые" фразы) ---
+const pureHello = /^(привет|здравствуй(?:те)?|доброе утро|добрый день|добрый вечер)[!.,\s]*$/i;
+const pureThanks = /^(спасибо|благодарю)[!.,\s]*$/i;
+
+// срабатывает только если вся фраза — приветствие/спасибо, без других слов
+if (pureHello.test(t)) {
+  const txt = `${addressPrefix(msg)}${state.teacher_display_name}: здравствуйте!`;
+  await sendToSameThread("sendMessage", token, msg, { text: txt });
+  return true;
+}
+if (pureThanks.test(t)) {
+  const txt = `${addressPrefix(msg)}${state.teacher_display_name}: пожалуйста!`;
+  await sendToSameThread("sendMessage", token, msg, { text: txt });
+  return true;
+}
 
   return false; // молчим
 }
